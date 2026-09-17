@@ -169,12 +169,56 @@ test('long KOOK replies use a full markdown attachment and preserve native menti
     id: 'long',
     address: { id: 'channel:g:123', title: 'test', kind: 'channel' as const },
     text: content,
+    notes: ['1.223 k · grep x1', 'Debug · 总计 1s'],
   }
   expect((await adapter.edit!('long-message', { ...message, partial: true })).status).toBe('sent')
   expect(uploaded).toBe('')
   expect(posted.length).toBeLessThan(8000)
-  expect(JSON.parse(posted)[0].modules.every((module: { type: string }) => module.type === 'section')).toBe(true)
+  expect(JSON.parse(posted)[0].modules.at(-1).type).toBe('context')
   expect((await adapter.edit!('long-message', { ...message, partial: false })).status).toBe('sent')
   expect(uploaded).toBe(content)
   expect(kookMentions(posted)).toEqual(['456'])
+  expect(JSON.parse(posted)[0].modules.at(-1)).toEqual({
+    type: 'context',
+    elements: [{ type: 'plain-text', content: 'Debug · 总计 1s' }],
+  })
+})
+
+test('KOOK renders body and status in one card with a divider and plain-text context modules', async () => {
+  const adapter = kook({ id: 'card', token: 'local-test-token', directory: '.', channels: ['123'], users: ['456'] })
+  const writes: { id?: string; content: string }[] = []
+  adapter.native.api.createMessage = async (data) => {
+    writes.push({ content: data.content })
+    return { success: true, data: { msg_id: 'one-card' } } as never
+  }
+  adapter.native.api.updateMessage = async (data) => {
+    writes.push({ id: data.msg_id, content: data.content! })
+    return { success: true } as never
+  }
+  adapter.native.api.createDirectMessage = adapter.native.api.createMessage as never
+  adapter.native.api.updateDirectMessage = adapter.native.api.updateMessage as never
+  for (const address of [
+    { id: 'channel:g:123', title: 'test', kind: 'channel' as const },
+    { id: 'dm:456', title: 'DM', kind: 'direct' as const },
+  ]) {
+    const draft = { id: 'single', address, text: '', partial: true, notes: ['— tks · Think in progress'] }
+    expect(await adapter.send(draft)).toEqual({ status: 'sent', messageId: 'one-card' })
+    expect(
+      await adapter.edit!('one-card', {
+        ...draft,
+        text: '回答正文',
+        partial: false,
+        notes: ['1.223 k · grep x1, shell x2', 'Debug · 总计 5s · 工具 3 次 / 1s'],
+      })
+    ).toEqual({ status: 'sent', messageId: 'one-card' })
+    const cards = JSON.parse(writes.at(-1)!.content)
+    expect(cards).toHaveLength(1)
+    expect(cards[0].modules).toEqual([
+      { type: 'section', text: { type: 'kmarkdown', content: '回答正文' } },
+      { type: 'divider' },
+      { type: 'context', elements: [{ type: 'plain-text', content: '1.223 k · grep x1, shell x2' }] },
+      { type: 'context', elements: [{ type: 'plain-text', content: 'Debug · 总计 5s · 工具 3 次 / 1s' }] },
+    ])
+    expect(writes.at(-1)?.id).toBe('one-card')
+  }
 })

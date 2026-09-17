@@ -86,7 +86,7 @@ test('directories open native tools per session, survive restart, and stay out o
     await f.host.receive('A', human('start', 'Use a coding tool'))
     await until(() => adapter.sent.some((message) => message.text.startsWith('DONE')))
     expect(await readFile(join(f.workspace, 'discovered.txt'), 'utf8')).toBe('NATIVE_WRITE')
-    expect(adapter.sent.find((message) => message.text.startsWith('DONE'))?.text).toContain('工具 1 次')
+    expect(adapter.sent.find((message) => message.text.startsWith('DONE'))?.notes?.join('\n')).toContain('工具 1 次')
     expect(JSON.stringify(adapter.sent)).not.toContain('list_coding_tools')
     expect(names(f.requests[2]!)).toContain('write')
 
@@ -276,8 +276,8 @@ test('late plugin tools retain native execution and only the four directory name
     })
     await f.host.receive('A', human('start', 'List records and probe'))
     await until(() => adapter.sent.some((message) => message.text.startsWith('DONE')))
-    expect(adapter.sent.find((message) => message.text.startsWith('DONE'))?.text).toContain('工具 2 次')
-    expect(adapter.sent.find((message) => message.kind === 'tools')?.text).toContain('list_records x1')
+    expect(adapter.sent.find((message) => message.text.startsWith('DONE'))?.notes?.join('\n')).toContain('工具 2 次')
+    expect(adapter.sent.find((message) => message.kind === 'reply')?.notes?.join('\n')).toContain('list_records x1')
     expect(JSON.stringify(adapter.sent)).not.toContain('list_tools')
     expect(step).toBe(5)
 

@@ -185,6 +185,7 @@ export function toolDirectory(resolvePrompt: (sessionId: string) => AccountPromp
           {
             type: 'text',
             text: [
+              '你由 OpenCode 驱动，但不代表你是编程/开发特化的 Agent——不要假设用户的专业领域，你只作为通用智能处理用户的请求。',
               prompt?.system,
               prompt?.context,
               environment,

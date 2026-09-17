@@ -72,7 +72,10 @@ test('per-account prompts exclude external instructions, isolate scopes, and see
     const input = await f.host.receive('A', human('a', 'USER_TASK', ['10001']))
     await until(() => a.sent.length === 1)
     const system = systemText(f.requests[0]!)
-    expect(system).toStartWith('Agent 身份：\n你是 研究员，账号 10001。')
+    expect(system).toStartWith(
+      '你由 OpenCode 驱动，但不代表你是编程/开发特化的 Agent——不要假设用户的专业领域，你只作为通用智能处理用户的请求。'
+    )
+    expect(system).toContain('Agent 身份：\n你是 研究员，账号 10001。')
     expect(system).toContain('A_PRIVATE_TASK')
     expect(JSON.stringify(f.requests[0])).not.toContain('PROJECT_GUIDANCE_TO_IGNORE')
     expect(system).toContain('"displayName":"审阅员","platformId":"10002"')

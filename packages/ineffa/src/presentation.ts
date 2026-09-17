@@ -6,10 +6,13 @@ import { isDirectoryTool } from './tool-directory'
 import type { Binding } from './types'
 
 type Turn = {
-  id: string
+  sourceId?: string
+  bodies: Map<string, string>
   tools: Map<string, string>
   tokens: Map<string, number>
   thinking?: 'in progress' | 'complete' | 'interrupted'
+  finished?: boolean
+  interrupted?: boolean
 }
 type JournalEvent = ReturnType<OpenCodeBridge['log']> extends AsyncIterable<infer Event> ? Event : never
 
@@ -40,19 +43,31 @@ export class Presentation {
       .sort(([left], [right]) => left - right)
       .map(([, text]) => text)
       .join('\n\n')
-    if (text.trim()) this.delivery.publish(binding, id, binding.inputId, text)
+    const turn = this.turns.get(binding.id)
+    if (!turn || turn.finished) return
+    turn.sourceId ??= id
+    turn.bodies.set(id, text)
+    if (text.trim()) this.publish(binding, turn, false)
   }
 
   observe(binding: Binding, event: JournalEvent, replay = false) {
     if (event.type === 'session.execution.started') {
-      this.turns.set(binding.id, { id: event.id, tools: new Map(), tokens: new Map() })
+      this.turns.set(binding.id, { bodies: new Map(), tools: new Map(), tokens: new Map() })
       return
     }
-    const turn = this.turns.get(binding.id)
+    let turn = this.turns.get(binding.id)
     if (!turn) return
+    // OpenCode may drain several queued inputs inside one execution.
+    if (event.type === 'session.step.started' && turn.finished) {
+      turn = { bodies: new Map(), tools: new Map(), tokens: new Map() }
+      this.turns.set(binding.id, turn)
+    }
     let changed = false
     let complete = false
     switch (event.type) {
+      case 'session.step.started':
+        turn.sourceId ??= event.data.assistantMessageID
+        break
       case 'session.reasoning.started':
         turn.thinking = 'in progress'
         changed = true
@@ -73,45 +88,66 @@ export class Presentation {
         if (tokens) turn.tokens.set(event.data.assistantMessageID, tokens.output + tokens.reasoning)
         if (this.text.get(binding.id)?.id === event.data.assistantMessageID) this.text.delete(binding.id)
         this.completed.set(binding.id, event.data.assistantMessageID)
-        changed = true
         break
       }
       case 'session.execution.succeeded':
       case 'session.execution.failed':
       case 'session.execution.interrupted':
+        turn.interrupted = event.type !== 'session.execution.succeeded'
         if (turn.thinking) turn.thinking = event.type === 'session.execution.succeeded' ? 'complete' : 'interrupted'
         complete = true
         changed = true
         break
     }
-    if (changed && !replay) this.publish(binding, turn, complete)
+    if (changed && !replay && !turn.finished) this.publish(binding, turn, complete)
     if (complete) this.turns.delete(binding.id)
   }
 
+  sourceId(binding: Binding, fallback: string) {
+    return this.turns.get(binding.id)?.sourceId ?? fallback
+  }
+
+  step(binding: Binding, messageId: string, text: string, complete: boolean, replay = false, failed = false) {
+    const turn = this.turns.get(binding.id)
+    if (!turn || turn.finished) return
+    turn.sourceId ??= messageId
+    turn.bodies.set(messageId, text)
+    turn.interrupted = failed
+    if (!replay) this.publish(binding, turn, complete)
+    turn.finished = complete
+  }
+
   private publish(binding: Binding, turn: Turn, complete: boolean) {
+    if (!turn.sourceId) return
     const tokens = formatOutputTokens(
       turn.tokens.size ? [...turn.tokens.values()].reduce((sum, count) => sum + count, 0) : undefined
     )
-    if (turn.tools.size) {
-      const counts = new Map<string, number>()
-      for (const name of turn.tools.values()) counts.set(name, (counts.get(name) ?? 0) + 1)
-      const tools = [...counts].map(([name, count]) => `${name} x${count}`).join(', ')
-      this.delivery.publish(binding, `tools:${turn.id}`, null, `(${tokens}) ${tools}`, 'tools', complete)
-    }
-    if (turn.thinking)
-      this.delivery.publish(
-        binding,
-        `thinking:${turn.id}`,
-        null,
-        `(${tokens}) Think ${turn.thinking}`,
-        'thinking',
-        complete
-      )
+    const counts = new Map<string, number>()
+    for (const name of turn.tools.values()) counts.set(name, (counts.get(name) ?? 0) + 1)
+    const tools = [...counts].map(([name, count]) => `${name} x${count}`).join(', ')
+    const notes = [
+      [tokens, tools, turn.thinking ? `Think ${turn.thinking}` : '', turn.interrupted ? '已停止' : '']
+        .filter(Boolean)
+        .join(' · '),
+    ]
+    const text = [...turn.bodies.values()].filter((body) => body.trim()).join('\n\n')
+    if (!complete && !text && !turn.tools.size && !turn.thinking) return
+    this.delivery.publish(
+      binding,
+      turn.sourceId,
+      turn.interrupted ? null : binding.inputId,
+      text,
+      'reply',
+      complete,
+      notes
+    )
   }
 
   interrupt(binding: Binding) {
     const turn = this.turns.get(binding.id)
     if (!turn) return
+    if (turn.finished) return
+    turn.interrupted = true
     if (turn.thinking) turn.thinking = 'interrupted'
     this.publish(binding, turn, true)
     this.turns.delete(binding.id)

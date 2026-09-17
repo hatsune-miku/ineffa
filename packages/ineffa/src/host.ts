@@ -449,7 +449,8 @@ export class Host {
           if (!('durable' in event) || !event.durable) continue
           const binding = this.store.binding(id)
           this.presentation.observe(binding, event, event.durable.seq <= binding.cursor)
-          if (event.durable.seq <= binding.cursor) {
+          const replay = event.durable.seq <= binding.cursor
+          if (replay && event.type !== 'session.step.ended' && event.type !== 'session.step.failed') {
             cursor = event.durable.seq
             continue
           }
@@ -466,7 +467,7 @@ export class Host {
             }
           }
           if (event.type === 'session.step.ended' || event.type === 'session.step.failed') {
-            this.engine.debug.usage(event)
+            if (!replay) this.engine.debug.usage(event)
             const message = await this.engine.message(binding.sessionId, event.data.assistantMessageID)
             if (message.type === 'assistant') {
               const text = message.content
@@ -474,21 +475,19 @@ export class Host {
                 .map((part) => part.text)
                 .join('\n\n')
               const publicText = text + (message.error ? `\n\n本轮处理失败：${message.error.message}` : '')
-              if (publicText.trim()) {
-                if (binding.debug)
-                  this.store.saveDebugReport(id, message.id, this.engine.debug.report(binding.sessionId, event.created))
-                this.delivery.publish(
-                  binding,
-                  message.id,
-                  message.error ? null : binding.inputId,
-                  publicText,
-                  'reply',
-                  true
-                )
+              const complete = event.type === 'session.step.failed' || event.data.finish !== 'tool-calls'
+              if (complete && binding.debug && !replay) {
+                const report = this.engine.debug.report(binding.sessionId, event.created)
+                this.store.saveDebugReport(id, message.id, report)
+                this.store.saveDebugReport(id, this.presentation.sourceId(binding, message.id), report)
               }
-              if (event.type === 'session.step.failed' || event.data.finish !== 'tool-calls')
-                this.engine.debug.finish(binding.sessionId, event.created)
+              this.presentation.step(binding, message.id, publicText, complete, replay, Boolean(message.error))
+              if (complete && !replay) this.engine.debug.finish(binding.sessionId, event.created)
             }
+          }
+          if (replay) {
+            cursor = event.durable.seq
+            continue
           }
           this.store.checkpoint(id, event.durable.seq, inputId)
           cursor = event.durable.seq

@@ -20,7 +20,8 @@ export class Delivery {
     inputId: string | null,
     text: string,
     kind: OutputKind = 'reply',
-    complete = false
+    complete = false,
+    notes?: string[]
   ) {
     const adapter = this.adapter(binding.adapterId)
     if (!complete && (!adapter.capabilities.edit || !adapter.edit)) return
@@ -28,7 +29,7 @@ export class Delivery {
     if (this.store.output(id)?.complete) return
     const save = () => {
       if (!this.store.bySession(binding.sessionId)) return
-      this.store.prepareOutput(binding.id, sourceId, inputId, text, { kind, complete })
+      this.store.prepareOutput(binding.id, sourceId, inputId, text, { kind, complete, notes })
       this.emit({ type: 'change', bindingId: binding.id })
     }
     if (complete) {
@@ -114,10 +115,12 @@ export class Delivery {
         const wait = 500 - (Date.now() - (this.lastWrite.get(id) ?? 0))
         if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
         if (!this.store.output(id)) return
+        const debug = output.complete ? this.store.debugReport(output.sourceId) : ''
         const message = {
           id,
           address: binding.address,
-          text: output.text + (output.complete ? this.store.debugReport(output.sourceId) : ''),
+          text: output.text,
+          notes: [...(output.notes ?? []), ...(debug ? [debug.replace(/^\s*>\s*/, '')] : [])],
           replyTo: output.inputId ? this.store.inbound(output.inputId)?.message.id : undefined,
           partial: !output.complete,
           kind: output.kind,

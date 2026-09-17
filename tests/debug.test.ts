@@ -51,8 +51,8 @@ test('debug measures the first remote SSE before thinking/tools/text and stays o
     expect(binding.debug).toBe(true)
     await f.host.receive('A', human('timed', 'write a file'))
     await until(() => adapter.sent.some((item) => item.text.startsWith('TIMED_REPLY')))
-    const output = adapter.sent.find((item) => item.text.startsWith('TIMED_REPLY'))!.text
-    expect(output).toContain('> Debug ·')
+    const output = adapter.sent.find((item) => item.text.startsWith('TIMED_REPLY'))!.notes!.at(-1)!
+    expect(output).toContain('Debug ·')
     expect(output).toContain('工具 1 次')
     // (80 + 180) / (100 + 300), not the unweighted mean of 80% and 60%.
     expect(output).toContain('缓存命中 65.0%')
@@ -82,7 +82,10 @@ test('debug measures the first remote SSE before thinking/tools/text and stays o
 
     await f.host.receive('A', human('timed-again', 'reply without tools'))
     await until(() => adapter.sent.filter((item) => item.text.startsWith('TIMED_REPLY')).length === 2)
-    const second = adapter.sent.filter((item) => item.text.startsWith('TIMED_REPLY')).at(-1)!.text
+    const second = adapter.sent
+      .filter((item) => item.text.startsWith('TIMED_REPLY'))
+      .at(-1)!
+      .notes!.at(-1)!
     const secondHeaders = second.split(' · 首字')[0]!.match(/\d+ ms/g)!
     expect(secondHeaders).toHaveLength(3)
     expect(new Set(secondHeaders).size).toBe(1)
@@ -114,7 +117,7 @@ test('debug reports failed requests honestly and resets totals for the next turn
     f.server.reload({ fetch: () => Response.json({ error: { message: 'AUTH_FAILED' } }, { status: 401 }) })
     await f.host.receive('A', human('failure', 'hello'))
     await until(() => adapter.sent.some((item) => item.text.includes('AUTH_FAILED')))
-    const reply = adapter.sent.find((item) => item.text.includes('AUTH_FAILED'))!.text
+    const reply = adapter.sent.find((item) => item.text.includes('AUTH_FAILED'))!.notes!.at(-1)!
     expect(reply).toContain('HTTP 401')
     expect(reply).toContain('首字 未采集')
     expect(reply).toContain('服务排队 未采集')

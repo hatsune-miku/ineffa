@@ -47,11 +47,12 @@ test.each(['/new', '/abort'])(
       const a = new StreamingAdapter('A', f.workspace)
       await f.host.addAdapter(a)
       await f.host.receive('A', human('start', 'think'))
-      await until(() => a.sent.some((item) => item.kind === 'thinking' && item.partial))
+      await until(() => a.sent.some((item) => item.kind === 'reply' && item.partial))
       const previous = f.store.current('A', 'channel:guild:1')!
       await f.host.receive('A', human('reset', command))
-      await until(() => a.sent.some((item) => item.kind === 'thinking' && !item.partial))
-      expect(a.sent.find((item) => item.kind === 'thinking')?.text).toContain('Think interrupted')
+      await until(() => a.sent.some((item) => item.kind === 'reply' && !item.partial))
+      expect(a.sent.find((item) => item.kind === 'reply')?.notes?.join('\n')).toContain('Think interrupted')
+      expect(a.sent.filter((item) => item.kind === 'reply')).toHaveLength(1)
       const current = f.store.current('A', previous.address.id)!
       if (command === '/new') expect(current.id).not.toBe(previous.id)
       else expect(current.id).toBe(previous.id)
@@ -63,14 +64,17 @@ test.each(['/new', '/abort'])(
   30_000
 )
 
-test('streaming edits three independent messages, counts output plus reasoning, and relays only final body', async () => {
+test('streaming edits one response with notes, counts output plus reasoning, and relays only final body', async () => {
   let calls = 0
   const f = await fixture((request) => {
     if (modelAccount(request)?.platformId === 'B') return 'B_DONE'
     if (++calls === 1) return { stream: [], tool: 'list_coding_tools', input: {}, usage: { output: 0, reasoning: 0 } }
     if (calls === 2)
       return {
-        stream: Array.from({ length: 6 }, () => ({ thinking: 'PRIVATE_REASONING', delay: 150 })),
+        stream: [
+          ...Array.from({ length: 6 }, () => ({ thinking: 'PRIVATE_REASONING', delay: 150 })),
+          { text: '先检查文件。' },
+        ],
         tool: 'write',
         input: { path: 'stream.txt', content: 'DONE' },
         usage: { output: 100, reasoning: 40 },
@@ -94,18 +98,19 @@ test('streaming edits three independent messages, counts output plus reasoning, 
     await until(() => a.writes.some((item) => item.message.kind === 'reply' && item.message.partial))
     expect(b.sent).toHaveLength(0)
     await until(() => b.sent.some((item) => item.text === 'B_DONE'))
-    await until(() => a.sent.some((item) => item.kind === 'thinking' && !item.partial))
-    const tools = a.sent.filter((item) => item.kind === 'tools')
-    const thinking = a.sent.filter((item) => item.kind === 'thinking')
-    expect(tools).toHaveLength(1)
-    expect(thinking).toHaveLength(1)
-    expect(tools[0]?.text).toBe('(1.223 k) write x1')
-    expect(thinking[0]?.text).toBe('(1.223 k) Think complete')
+    await until(() => a.sent.some((item) => item.kind === 'reply' && !item.partial))
+    expect(a.sent.filter((item) => item.kind === 'tools' || item.kind === 'thinking')).toHaveLength(0)
+    const reply = a.sent.find((item) => item.kind === 'reply')!
+    expect(reply.notes?.[0]).toBe('1.223 k · write x1 · Think complete')
     // The directory step already reported zero tokens before reasoning starts.
-    expect(a.writes.some((item) => item.message.text === '(0 tks) Think in progress')).toBe(true)
-    expect(a.writes.some((item) => item.message.kind === 'tools' && item.edit)).toBe(true)
+    expect(a.writes.some((item) => item.message.notes?.[0] === '0 tks · Think in progress')).toBe(true)
+    expect(a.writes.some((item) => item.message.kind === 'reply' && item.edit)).toBe(true)
+    expect(a.writes.filter((item) => item.message.kind === 'reply' && !item.edit)).toHaveLength(1)
     expect(a.sent.filter((item) => item.kind === 'reply')).toHaveLength(1)
-    expect(a.sent.find((item) => item.kind === 'reply')?.text).toContain('FINAL\n\n> Debug ·')
+    expect(reply.text).toContain('FINAL')
+    expect(reply.text).toStartWith('先检查文件。\n\n')
+    expect(reply.text).not.toContain('Debug')
+    expect(reply.notes?.at(-1)).toContain('Debug ·')
     for (const id of new Set(a.writes.map((item) => item.message.id))) {
       const writes = a.writes.filter((item) => item.message.id === id)
       for (let index = 1; index < writes.length; index++)
@@ -113,12 +118,17 @@ test('streaming edits three independent messages, counts output plus reasoning, 
     }
     const forwarded = JSON.stringify(f.requests.filter((request) => modelAccount(request)?.platformId === 'B'))
     expect(forwarded).toContain('FINAL')
-    expect(forwarded).not.toContain('(1.223 k)')
+    expect(forwarded).not.toContain('1.223 k')
+    expect(forwarded).not.toContain('Think complete')
     expect(forwarded).not.toContain('Debug ·')
     expect(forwarded).not.toContain('/debug')
     expect(a.writes.some((item) => item.message.text.includes('PRIVATE_REASONING'))).toBe(false)
     const final = a.sent.find((item) => item.kind === 'reply')!
-    await f.host.receive('A', { ...human('quote', 'continue'), quote: final.text })
+    await f.host.receive('A', {
+      ...human('quote', 'continue'),
+      quote: JSON.stringify([{ type: 'card', modules: [{ type: 'context', elements: final.notes }] }]),
+      quoteId: `remote-${final.id}`,
+    })
     await until(() => calls === 4)
     expect(JSON.stringify(f.requests.at(-1))).not.toContain('Debug ·')
     expect(JSON.stringify(f.requests.at(-1))).not.toContain('(1.223 k)')

@@ -157,6 +157,13 @@ async function sourceFile(file: Attachment): Promise<File> {
 /** Start with a card so later edits can add file modules without changing the message type. */
 export async function kookCard(client: KookClient, message: OutgoingMessage, mentions: (text: string) => string[]) {
   const modules: ObjectValue[] = []
+  const notes = (message.notes ?? [])
+    .filter((note) => note.trim())
+    .map((note) => ({
+      type: 'context',
+      elements: [{ type: 'plain-text', content: note.slice(0, 2_000) }],
+    }))
+  const footer = notes.length ? [{ type: 'divider' }, ...notes] : []
   async function upload(file: File) {
     const data = new FormData()
     data.append('file', file)
@@ -174,15 +181,18 @@ export async function kookCard(client: KookClient, message: OutgoingMessage, men
     }
   }
   function serialize() {
-    return JSON.stringify([{ type: 'card', theme: 'none', size: 'lg', modules }])
+    return JSON.stringify([{ type: 'card', theme: 'none', size: 'lg', modules: [...modules, ...footer] }])
   }
   let text = message.partial ? message.text.slice(0, 7_000) : message.text
   sections(text)
   if (text.length > 7_000 || serialize().length > 7_800) {
     modules.length = 0
     if (message.partial) {
-      while (text.length && JSON.stringify(text).length > 7_000) text = text.slice(0, -500)
-      sections(text)
+      do {
+        text = text.slice(0, -500)
+        modules.length = 0
+        sections(text)
+      } while (text.length && serialize().length > 7_800)
     } else {
       sections(
         mentions(text)

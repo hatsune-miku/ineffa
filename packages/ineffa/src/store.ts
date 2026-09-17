@@ -22,6 +22,7 @@ function outbound(row: Row): Outbound {
   return {
     ...row,
     files: row.files ? JSON.parse(String(row.files)) : undefined,
+    notes: row.notes ? JSON.parse(String(row.notes)) : undefined,
     relayed: Boolean(row.relayed),
     complete: Boolean(row.complete),
   } as Outbound
@@ -33,7 +34,7 @@ export class Store {
     this.db = new Database(path, { create: true, strict: true })
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;')
     const version = this.db.query('PRAGMA user_version').get() as { user_version: number }
-    if (version.user_version > 7) throw new Error('投递数据库来自较新的 Ineffa 版本，请恢复配套备份。')
+    if (version.user_version > 8) throw new Error('投递数据库来自较新的 Ineffa 版本，请恢复配套备份。')
     this.db.transaction(() => {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS bindings (
@@ -92,7 +93,8 @@ export class Store {
           );
         `)
       }
-      this.db.exec('PRAGMA user_version=7;')
+      if (version.user_version < 8) this.db.exec('ALTER TABLE outbound ADD COLUMN notes TEXT;')
+      this.db.exec('PRAGMA user_version=8;')
     })()
     // A process may have died after the remote side accepted a send. Do not resend blindly.
     this.db
@@ -321,23 +323,24 @@ export class Store {
     sourceId: string,
     inputId: string | null,
     text: string,
-    options: { complete?: boolean; kind?: OutputKind; files?: Attachment[] } = {}
+    options: { complete?: boolean; kind?: OutputKind; files?: Attachment[]; notes?: string[] } = {}
   ) {
     const id = identity('out_', bindingId, sourceId)
     const complete = options.complete ?? true
     const files = options.files?.length ? JSON.stringify(options.files) : null
+    const notes = options.notes?.length ? JSON.stringify(options.notes) : null
     this.db
       .query(
-        "INSERT OR IGNORE INTO outbound(id,bindingId,sourceId,inputId,text,files,state,createdAt,kind,complete) VALUES(?,?,?,?,?,?,'pending',?,?,?)"
+        "INSERT OR IGNORE INTO outbound(id,bindingId,sourceId,inputId,text,files,notes,state,createdAt,kind,complete) VALUES(?,?,?,?,?,?,?,'pending',?,?,?)"
       )
-      .run(id, bindingId, sourceId, inputId, text, files, Date.now(), options.kind ?? 'reply', complete ? 1 : 0)
+      .run(id, bindingId, sourceId, inputId, text, files, notes, Date.now(), options.kind ?? 'reply', complete ? 1 : 0)
     this.db
       .query(
-        `UPDATE outbound SET text=?,files=?,inputId=?,complete=?,revision=revision+1,attempts=0,
+        `UPDATE outbound SET text=?,files=?,notes=?,inputId=?,complete=?,revision=revision+1,attempts=0,
       state=CASE WHEN state='sent' THEN 'pending' ELSE state END
-      WHERE id=? AND complete=0 AND (text<>? OR files IS NOT ? OR complete<>? OR inputId IS NOT ?)`
+      WHERE id=? AND complete=0 AND (text<>? OR files IS NOT ? OR notes IS NOT ? OR complete<>? OR inputId IS NOT ?)`
       )
-      .run(text, files, inputId, complete ? 1 : 0, id, text, files, complete ? 1 : 0, inputId)
+      .run(text, files, notes, inputId, complete ? 1 : 0, id, text, files, notes, complete ? 1 : 0, inputId)
     return this.output(id)!
   }
   output(id: string) {

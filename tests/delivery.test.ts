@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { type Adapter, type Inbound, Store } from 'ineffa'
+import { mkdir, mkdtemp } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 
 import { TestAdapter, human, until } from './fixture'
 
@@ -21,6 +23,57 @@ function setup() {
   return { store, adapter, binding, delivery, relays: () => relays }
 }
 describe('confirmed public delivery', () => {
+  test('note-only changes edit the same reply and remain separate from its body', async () => {
+    const f = setup()
+    const adapter: Adapter = f.adapter
+    const edits: { text: string; notes?: string[] }[] = []
+    adapter.edit = async (id, message) => {
+      edits.push(message)
+      return { status: 'sent', messageId: id }
+    }
+    try {
+      f.delivery.publish(f.binding, 'single-turn', null, 'BODY', 'reply', false, ['10 tks · grep x1'])
+      await f.delivery.flush()
+      const first = f.store.outputs()[0]!
+      f.delivery.publish(f.binding, 'single-turn', null, 'BODY', 'reply', false, ['20 tks · grep x2'])
+      await f.delivery.flush()
+      expect(f.store.outputs()[0]!.revision).toBeGreaterThan(first.revision)
+      f.store.saveDebugReport(f.binding.id, 'single-turn', '\n\n> Debug · 总计 5s')
+      f.delivery.publish(f.binding, 'single-turn', null, 'BODY', 'reply', true, ['30 tks · grep x3'])
+      await f.delivery.flush()
+      expect(f.adapter.sent).toHaveLength(1)
+      expect(edits.at(-1)?.notes).toEqual(['30 tks · grep x3', 'Debug · 总计 5s'])
+      expect(edits.at(-1)?.text).toBe('BODY')
+      expect(f.store.outputs()).toHaveLength(1)
+      expect(f.store.contextQuote('RAW_CARD_WITH_NOTES', first.messageId!)).toBe('BODY')
+    } finally {
+      f.store.close()
+    }
+  })
+
+  test('version 7 migration preserves replies and version 8 persists notes on restart', async () => {
+    const root = resolve(process.env.INEFFA_TEST_DIR ?? 'test-results/runtime')
+    await mkdir(root, { recursive: true })
+    const directory = await mkdtemp(join(root, 'notes-'))
+    const path = join(directory, 'store.sqlite')
+    let store = new Store(path)
+    try {
+      const binding = store.ensure('A', human('a', '').address, 'build', directory)
+      const old = store.prepareOutput(binding.id, 'old', null, 'OLD_BODY')
+      store.db.exec('ALTER TABLE outbound DROP COLUMN notes; PRAGMA user_version=7;')
+      store.close()
+      store = new Store(path)
+      expect(store.output(old.id)?.text).toBe('OLD_BODY')
+      const next = store.prepareOutput(binding.id, 'new', null, 'NEW_BODY', { notes: ['1 k · grep x2'] })
+      store.close()
+      store = new Store(path)
+      expect(store.output(next.id)?.notes).toEqual(['1 k · grep x2'])
+      expect(store.output(next.id)?.text).toBe('NEW_BODY')
+    } finally {
+      store.close()
+    }
+  })
+
   test('an old creation echo cannot confirm a newer final edit or relay its mentions', async () => {
     const f = setup()
     const adapter: Adapter = f.adapter

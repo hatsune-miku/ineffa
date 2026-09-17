@@ -21,6 +21,8 @@ export type OutgoingMessage = {
   id: string
   address: Address
   text: string
+  /** Display-only footer; never part of the model body or agent-to-agent relay. */
+  notes?: string[]
   files?: Attachment[]
   replyTo?: string
   partial?: boolean
@@ -99,6 +101,7 @@ export type Outbound = {
   sourceId: string
   inputId: string | null
   text: string
+  notes?: string[]
   files?: Attachment[]
   state: 'pending' | 'sending' | 'sent' | 'failed' | 'unknown'
   messageId: string | null
