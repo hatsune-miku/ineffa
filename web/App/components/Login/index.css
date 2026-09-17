@@ -1,0 +1,17 @@
+.login-page {
+  height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--cake-bg);
+}
+
+.login-form {
+  width: 380px;
+  max-width: 100%;
+
+  .login-title {
+    font-size: 25px;
+    margin-bottom: 10px;
+  }
+}

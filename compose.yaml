@@ -1,0 +1,10 @@
+services:
+  ineffa:
+    extends:
+      file: deploy/compose.yaml
+      service: ineffa
+    build: .
+
+volumes:
+  ineffa-data:
+  ineffa-workspace:

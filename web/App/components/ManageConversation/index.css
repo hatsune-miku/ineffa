@@ -1,0 +1,23 @@
+.session-facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  font-size: 11px;
+
+  .fact-value {
+    user-select: text;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .fact-row {
+    display: grid;
+    grid-template-columns: 85px 1fr;
+    gap: 16px;
+  }
+
+  .fact-label {
+    color: var(--cake-muted);
+  }
+}

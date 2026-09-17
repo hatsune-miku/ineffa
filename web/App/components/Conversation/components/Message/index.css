@@ -1,0 +1,152 @@
+.message {
+  padding: 12px 0 23px;
+
+  + .message {
+    margin-top: 6px;
+  }
+
+  &:hover .message-copy-button {
+    opacity: 1;
+  }
+
+  @media (max-width: 620px) {
+    padding-bottom: 20px;
+  }
+}
+
+.message-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.message-author {
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.message-time {
+  color: var(--cake-muted);
+  font-size: 10px;
+  margin-left: 2px;
+}
+
+.message-avatar {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  background: var(--cake-hover);
+  color: var(--cake-muted);
+  border-radius: 8px;
+  font-size: 10px;
+
+  .message-avatar-icon {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.agent-avatar {
+  background: var(--cake-accent-soft);
+  color: var(--cake-accent-ink);
+}
+
+.message-body {
+  margin-left: 35px;
+  min-width: 0;
+
+  @media (max-width: 620px) {
+    margin-left: 0;
+  }
+}
+
+.message-content {
+  font-size: 14px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+  user-select: text;
+
+  @media (max-width: 620px) {
+    font-size: 13px;
+  }
+}
+
+.tool-detail {
+  .tool-output {
+    background: var(--cake-bg);
+    border-radius: 10px;
+    padding: 15px;
+    overflow: auto;
+    font-size: 12px;
+    line-height: 1.7;
+    max-height: 420px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin-block: 8px;
+  }
+}
+
+.user-text {
+  white-space: pre-wrap;
+}
+
+.message-user {
+  .message-content {
+    color: var(--cake-text);
+  }
+}
+
+.message-actions {
+  display: flex;
+  margin-top: 9px;
+  margin-left: -6px;
+  color: var(--cake-muted);
+
+  .message-copy-button {
+    opacity: 0.45;
+  }
+
+  .message-copy-button:focus-visible {
+    opacity: 1;
+  }
+}
+
+.system-message {
+  font-size: 11px;
+  color: var(--cake-muted);
+  text-align: center;
+  padding: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+
+.tool-list {
+  margin-top: 13px;
+}
+
+.tool-title {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  font-size: 11px;
+
+  .tool-icon {
+    width: 14px;
+  }
+
+  .tool-status {
+    margin-left: auto;
+    font-size: 10px;
+  }
+}
+
+.attachment-link {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  margin-top: 10px;
+}

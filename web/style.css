@@ -1,0 +1,265 @@
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cake-line) transparent;
+}
+
+html {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--cake-bg);
+  font-synthesis: none;
+  font-variant-ligatures: none;
+}
+
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+}
+
+button {
+  font-synthesis: none;
+  font-variant-ligatures: none;
+  -webkit-tap-highlight-color: transparent;
+  font: inherit;
+}
+
+input {
+  font-synthesis: none;
+  font-variant-ligatures: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+select {
+  font-synthesis: none;
+  font-variant-ligatures: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+textarea {
+  font-synthesis: none;
+  font-variant-ligatures: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.link {
+  -webkit-tap-highlight-color: transparent;
+  color: var(--cake-accent);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--cake-accent-ink);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
+button:focus-visible {
+  outline: 2px solid var(--cake-accent);
+  outline-offset: 3px;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--cake-accent);
+  outline-offset: 3px;
+}
+
+summary:focus-visible {
+  outline: 2px solid var(--cake-accent);
+  outline-offset: 3px;
+}
+
+h1 {
+  margin: 0;
+  font-weight: 550;
+  letter-spacing: -0.035em;
+}
+
+h2 {
+  margin: 0;
+  font-weight: 550;
+  letter-spacing: -0.035em;
+}
+
+h3 {
+  margin: 0;
+  font-weight: 550;
+  letter-spacing: -0.035em;
+}
+
+p {
+  margin: 0;
+}
+
+.working-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--cake-accent);
+  animation: ineffa-working 1.6s ease-in-out infinite;
+}
+
+@keyframes ineffa-working {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.4;
+    transform: scale(0.72);
+  }
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.preformatted {
+  user-select: text;
+  font-family: ui-monospace, 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+  font-variant-ligatures: none;
+}
+
+.send-button {
+  padding: 7px !important;
+  width: 34px;
+  height: 34px;
+  min-height: 0 !important;
+  border-radius: 11px !important;
+}
+
+.eyebrow {
+  color: var(--cake-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+
+  &.compact {
+    gap: 7px;
+  }
+
+  .form-control {
+    width: 100%;
+  }
+}
+
+.inline-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+
+  .form-control {
+    width: 100%;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .cake-button {
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 620px) {
+    flex-wrap: wrap;
+
+    .form-control {
+      width: auto;
+    }
+  }
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+
+  @media (max-width: 620px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.muted {
+  color: var(--cake-muted);
+  font-size: 12px;
+}
+
+.footnote {
+  font-size: 11px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+
+  @media (max-width: 620px) {
+    gap: 8px;
+  }
+}
+
+.error-text {
+  color: var(--cake-danger);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  margin: 8px 0;
+}
+
+.mobile-only {
+  display: none !important;
+
+  @media (max-width: 620px) {
+    display: inline-flex !important;
+  }
+}
+
+.desktop-only {
+  @media (max-width: 620px) {
+    display: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+
+  *::before {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

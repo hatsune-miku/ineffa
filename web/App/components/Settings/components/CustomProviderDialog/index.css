@@ -1,0 +1,16 @@
+.custom-provider-form {
+  .provider-identity-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    @media (max-width: 560px) {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .provider-models {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+}

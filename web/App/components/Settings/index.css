@@ -1,0 +1,114 @@
+.delivery-text {
+  user-select: text;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 130px;
+  overflow-y: auto;
+}
+
+.settings-scroll {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.settings-content {
+  max-width: 830px;
+  margin: 0 auto;
+  padding: 42px 40px 64px;
+
+  @media (max-width: 820px) {
+    padding: 30px 24px;
+  }
+
+  @media (max-width: 620px) {
+    padding: 26px 22px 35px;
+  }
+}
+
+.settings-section {
+  margin-top: 30px;
+  padding-bottom: 30px;
+  border-bottom: 1px solid var(--cake-line);
+
+  @media (max-width: 620px) {
+    .settings-action {
+      font-size: 10px;
+    }
+  }
+}
+
+.section-heading {
+  font-size: 15px;
+  letter-spacing: -0.02em;
+}
+
+.connection-list {
+  margin: 16px 0 20px;
+}
+
+.connection-row {
+  display: flex;
+  gap: 13px;
+  align-items: center;
+  padding: 17px 0;
+  border-bottom: 1px solid var(--cake-line);
+
+  &:last-child {
+    border: 0;
+  }
+
+  .connection-name {
+    display: block;
+    font-weight: 500;
+    font-size: 13px;
+  }
+
+  .connection-description {
+    display: block;
+    margin-top: 3px;
+    font-size: 10px;
+  }
+
+  .connection-status {
+    font-size: 10px;
+  }
+
+  @media (max-width: 620px) {
+    gap: 8px;
+  }
+}
+
+.connection-symbol {
+  width: 35px;
+  height: 35px;
+  background: var(--cake-bg);
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--cake-muted);
+}
+
+.runtime-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  .runtime-version {
+    margin-top: 8px;
+    font-size: 10px;
+  }
+}
+
+.delivery-row {
+  border-bottom: 1px solid var(--cake-line);
+  padding: 18px 0;
+
+  .delivery-note {
+    margin-top: 10px;
+  }
+
+  .delivery-action {
+    margin-top: 10px;
+  }
+}

@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.ineffa
+workspace
+.env
+.env.*
+ineffa.config.ts
+test-results
+release
+.playwright-mcp
+*.log

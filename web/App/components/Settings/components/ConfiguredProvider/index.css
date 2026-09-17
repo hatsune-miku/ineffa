@@ -1,0 +1,42 @@
+.configured-provider {
+  align-items: flex-start;
+
+  .configured-provider-actions {
+    gap: 4px;
+  }
+
+  .configured-models {
+    margin-top: 8px;
+  }
+
+  .configured-models-summary {
+    cursor: pointer;
+    color: var(--cake-muted);
+    font-size: 12px;
+    width: fit-content;
+  }
+
+  .configured-models-list {
+    display: flex;
+    flex-direction: column;
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+
+  .configured-model {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 36px;
+  }
+
+  .configured-model-name {
+    font-size: 12px;
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+}

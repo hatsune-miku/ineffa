@@ -1,0 +1,6 @@
+.small-empty {
+  text-align: center;
+  padding: 55px 15px;
+  color: var(--cake-muted);
+  font-size: 13px;
+}

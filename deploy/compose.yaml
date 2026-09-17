@@ -1,0 +1,21 @@
+name: ineffa
+
+services:
+  ineffa:
+    image: ${INEFFA_IMAGE:-ineffa:local}
+    pull_policy: never
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${INEFFA_PORT:-4097}:4097"
+    environment:
+      INEFFA_TOKEN: ${INEFFA_TOKEN:?Set INEFFA_TOKEN in .env before starting Docker}
+      INEFFA_PUBLIC_ORIGIN: ${INEFFA_PUBLIC_ORIGIN:-}
+    volumes:
+      - ineffa-data:/app/.ineffa
+      - ineffa-workspace:/app/workspace
+    stop_grace_period: 45s
+
+volumes:
+  ineffa-data:
+  ineffa-workspace:

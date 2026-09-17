@@ -1,0 +1,9 @@
+node_modules
+dist
+.ineffa
+workspace
+test-results
+release
+.playwright-mcp
+playwright-report
+bun.lock
