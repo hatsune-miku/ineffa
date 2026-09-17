@@ -115,6 +115,7 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
       return displayName
     },
     platform: 'kook',
+    promptInstructions: 'KOOK 回复格式：不要使用 Markdown 表格、LaTeX 或以 # 开头的标题；使用普通段落和列表。',
     agent: options.agent ?? 'build',
     directory: resolve(options.directory),
     get agentPrompt() {

@@ -29,8 +29,9 @@ test('account model updates preserve an in-flight generation and change the next
   const f = await fixture(async () => {
     if (++calls === 1) {
       await gate
-      return { tool: 'write', input: { path: 'model-switch.txt', content: 'DONE' } }
+      return { tool: 'list_coding_tools', input: {} }
     }
+    if (calls === 2) return { tool: 'write', input: { path: 'model-switch.txt', content: 'DONE' } }
     return 'FINISHED'
   })
   const accounts = new AccountsConfig(join(f.directory, 'accounts.json'))
@@ -94,7 +95,7 @@ test('account model updates preserve an in-flight generation and change the next
     }
     release()
     await until(() => f.store.outputs().some((item) => item.text === 'FINISHED'))
-    expect(f.requests.map((item) => item.model)).toEqual(['echo', 'echo-alt'])
+    expect(f.requests.map((item) => item.model)).toEqual(['echo', 'echo-alt', 'echo-alt'])
     expect(await Bun.file(join(f.workspace, 'model-switch.txt')).text()).toBe('DONE')
     expect(f.requests[1]?.messages.some((item) => item.role === 'tool')).toBe(true)
 

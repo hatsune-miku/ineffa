@@ -25,11 +25,14 @@ const prompts = [
 ]
 
 test('question targets the initiating human, accepts unmentioned answers, and deduplicates between fields', async () => {
-  const f = await fixture((request) =>
-    request.messages.some((message) => message.role === 'tool')
-      ? 'DONE'
-      : { tool: 'question', input: { questions: prompts } }
-  )
+  const f = await fixture((request) => {
+    const result = request.messages.filter((message) => message.role === 'tool').at(-1)
+    if (!result) return { tool: 'list_tools', input: {} }
+    if (String(result.content).includes('"name":"question"')) {
+      return { tool: 'question', input: { questions: prompts } }
+    }
+    return 'DONE'
+  })
   try {
     const a = new TestAdapter('A', f.workspace)
     await f.host.addAdapter(a)
@@ -115,11 +118,14 @@ test('restart expires upstream memory-only forms and retains answer receipts wit
 }, 30_000)
 
 test('a web answer closes platform capture and an unrelated channel cannot answer', async () => {
-  const f = await fixture((request) =>
-    request.messages.some((message) => message.role === 'tool')
-      ? 'DONE'
-      : { tool: 'question', input: { questions: [prompts[0]] } }
-  )
+  const f = await fixture((request) => {
+    const result = request.messages.filter((message) => message.role === 'tool').at(-1)
+    if (!result) return { tool: 'list_tools', input: {} }
+    if (String(result.content).includes('"name":"question"')) {
+      return { tool: 'question', input: { questions: [prompts[0]] } }
+    }
+    return 'DONE'
+  })
   try {
     const a = new TestAdapter('A', f.workspace)
     await f.host.addAdapter(a)
@@ -183,11 +189,14 @@ test('two bots asking the same human require a quote or a specific bot mention',
 }, 30_000)
 
 test('pending question supports an allowed DM answer and /abort without a mention cancels the wait', async () => {
-  const f = await fixture((request) =>
-    request.messages.some((message) => message.role === 'tool')
-      ? 'DONE'
-      : { tool: 'question', input: { questions: [prompts[0]] } }
-  )
+  const f = await fixture((request) => {
+    const result = request.messages.filter((message) => message.role === 'tool').at(-1)
+    if (!result) return { tool: 'list_tools', input: {} }
+    if (String(result.content).includes('"name":"question"')) {
+      return { tool: 'question', input: { questions: [prompts[0]] } }
+    }
+    return 'DONE'
+  })
   try {
     const a = new TestAdapter('A', f.workspace)
     await f.host.addAdapter(a)
@@ -206,6 +215,7 @@ test('pending question supports an allowed DM answer and /abort without a mentio
     const current = f.store.current('A', 'channel:guild:1')!
     await f.host.receive('A', human('abort', '/abort', []))
     await until(() => a.sent.some((message) => message.text === '已停止。'))
+    await until(async () => (await f.engine.native.form.list({ sessionID: current.sessionId })).length === 0)
     expect(await f.engine.native.form.list({ sessionID: current.sessionId })).toEqual([])
     await f.host.receive('A', human('after', '普通发言', []))
     expect(f.store.observed(current.id).at(-1)?.message.text).toBe('普通发言')

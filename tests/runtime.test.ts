@@ -194,11 +194,11 @@ test('deleting a running session stops execution, drops its queue, and preserves
 
 test("real tool execution and its result remain in the next turn's context", async () => {
   let calls = 0
-  const f = await fixture(() =>
-    ++calls === 1
-      ? { tool: 'write', input: { path: 'progress.txt', content: 'A_COMPLETED_THIS' } }
-      : 'TOOL_WORK_FINISHED'
-  )
+  const f = await fixture(() => {
+    if (++calls === 1) return { tool: 'list_coding_tools', input: {} }
+    if (calls === 2) return { tool: 'write', input: { path: 'progress.txt', content: 'A_COMPLETED_THIS' } }
+    return 'TOOL_WORK_FINISHED'
+  })
   try {
     const a = new TestAdapter('A', f.workspace)
     await f.host.addAdapter(a)
@@ -207,9 +207,9 @@ test("real tool execution and its result remain in the next turn's context", asy
     expect(await Bun.file(join(f.workspace, 'progress.txt')).text()).toBe('A_COMPLETED_THIS')
     await f.host.receive('A', human('tool-two', '继续之前的工作'))
     await until(() => a.sent.filter((item) => item.kind === 'reply').length === 2)
-    expect(f.requests[2]?.messages.some((m) => m.role === 'tool')).toBe(true)
-    expect(JSON.stringify(f.requests[2]?.messages)).toContain('A_COMPLETED_THIS')
-    expect(calls).toBe(3)
+    expect(f.requests[3]?.messages.some((m) => m.role === 'tool')).toBe(true)
+    expect(JSON.stringify(f.requests[3]?.messages)).toContain('A_COMPLETED_THIS')
+    expect(calls).toBe(4)
   } finally {
     await f.close()
   }

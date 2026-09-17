@@ -141,7 +141,11 @@ test('custom provider discovery uses the supplied API root and bearer key, handl
 test('custom providers save into OpenCode config, hot reload, run tools, preserve config and credentials, and survive restart', async () => {
   let calls = 0
   const f = await fixture(
-    () => (++calls === 1 ? { tool: 'write', input: { path: 'provider.txt', content: 'OK' } } : 'CUSTOM_REPLY'),
+    () => {
+      if (++calls === 1) return { tool: 'list_coding_tools', input: {} }
+      if (calls === 2) return { tool: 'write', input: { path: 'provider.txt', content: 'OK' } }
+      return 'CUSTOM_REPLY'
+    },
     {},
     0,
     true

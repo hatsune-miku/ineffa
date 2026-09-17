@@ -2,12 +2,14 @@ import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { Plugin } from '@opencode/plugin'
-import { OpenCode, type OpenCodeEvent } from '@opencode/sdk'
+import type { OpenCode, OpenCodeEvent } from '@opencode/sdk'
 
 import { DebugTimings } from './debug'
 import { modelReference } from './model'
+import { createEmbedded } from './opencode-runtime'
 import type { AccountPrompt } from './prompt'
 import { identity } from './store'
+import { instructionOverrides, toolDirectory } from './tool-directory'
 import type { Attachment, Binding, Inbound } from './types'
 
 export type EngineMessage = Awaited<ReturnType<OpenCode.Interface['sessions']['message']>>
@@ -27,6 +29,7 @@ export class OpenCodeBridge {
     readonly configDirectory: string,
     readonly databasePath: string
   ) {}
+
   async configureFileTool(
     available: (sessionId: string) => boolean,
     send: (sessionId: string, messageId: string, callId: string, path: string, caption: string) => Promise<string>
@@ -123,22 +126,7 @@ export class OpenCodeBridge {
     } while (cursor)
   }
   async configureAccountPrompts(resolvePrompt: (sessionId: string) => AccountPrompt | undefined) {
-    await this.native.plugin(
-      Plugin.define({
-        id: 'ineffa.account-prompt',
-        async setup(context) {
-          await context.session.hook('context', (event) => {
-            const prompt = resolvePrompt(event.sessionID)
-            if (!prompt) return
-
-            // OpenCode 2.0.3 puts the selected agent's base prompt first.
-            // Keep its remaining environment, project and tool instructions.
-            if (prompt.system) event.system[0] = { type: 'text', text: prompt.system }
-            event.system.push({ type: 'text', text: prompt.context })
-          })
-        },
-      })
-    )
+    await this.native.plugin(toolDirectory(resolvePrompt))
   }
   static async open(dataDirectory: string, options: OpenCodeOptions = {}) {
     await mkdir(dataDirectory, { recursive: true })
@@ -146,14 +134,17 @@ export class OpenCodeBridge {
     await mkdir(configDirectory, { recursive: true })
     const debug = new DebugTimings()
     return new OpenCodeBridge(
-      await OpenCode.create({
-        ...options,
-        instances: debug.instances(options.instances),
-        app: { name: 'ineffa', version: '0.1.0', ...options.app },
-        database: { path: resolve(dataDirectory, 'opencode.sqlite') },
-        events: { persist: true },
-        config: { directory: configDirectory, ...options.config },
-      }),
+      await createEmbedded(
+        {
+          ...options,
+          instances: debug.instances(options.instances),
+          app: { name: 'ineffa', version: '0.1.0', ...options.app },
+          database: { path: resolve(dataDirectory, 'opencode.sqlite') },
+          events: { persist: true },
+          config: { directory: configDirectory, ...options.config },
+        },
+        { overrides: instructionOverrides }
+      ),
       debug,
       configDirectory,
       resolve(dataDirectory, 'opencode.sqlite')

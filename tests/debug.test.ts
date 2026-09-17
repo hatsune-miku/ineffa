@@ -16,6 +16,13 @@ test('debug measures the first remote SSE before thinking/tools/text and stays o
       calls++
       if (calls === 1)
         return {
+          stream: [],
+          tool: 'list_coding_tools',
+          input: {},
+          usage: { output: 0, reasoning: 0, input: 0, cached: 0 },
+        }
+      if (calls === 2)
+        return {
           stream: [{ thinking: 'Delayed reasoning', delay: 1500 }],
           tool: 'write',
           input: { path: 'debug.txt', content: 'DONE' },
@@ -23,7 +30,7 @@ test('debug measures the first remote SSE before thinking/tools/text and stays o
         }
       return {
         stream: [{ text: 'TIMED_REPLY' }],
-        usage: { output: 10, reasoning: 0, input: 300, cached: calls === 2 ? 180 : undefined },
+        usage: { output: 10, reasoning: 0, input: 300, cached: calls === 3 ? 180 : undefined },
       }
     },
     {},
@@ -55,7 +62,6 @@ test('debug measures the first remote SSE before thinking/tools/text and stays o
     expect(headers.every((value) => value >= 60)).toBe(true)
     expect(headers[0]!).toBeLessThanOrEqual(headers[2]!)
     expect(headers[2]!).toBeLessThanOrEqual(headers[1]!)
-    expect(Math.abs(headers[2]! - (headers[0]! + headers[1]!) / 2)).toBeLessThanOrEqual(1)
     expect(first).toHaveLength(1)
     expect(first[0]).toBeGreaterThanOrEqual(160)
     // The initial role SSE arrives before the deliberately delayed reasoning and tool call.

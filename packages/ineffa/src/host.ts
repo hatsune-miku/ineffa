@@ -63,15 +63,8 @@ export class Host {
       (id) => this.adapter(id),
       (id) => this.delivery.enqueue(id)
     )
-    this.promptsReady = Promise.all([
-      engine.configureAccountPrompts((sessionId) => {
-        const binding = this.store.bySession(sessionId)
-        if (!binding || binding.archivedAt) return
-        const adapter = this.adapters.get(binding.adapterId)
-        if (!adapter || !this.ownsIdentity(adapter)) return
-        return accountPrompt(adapter, this.conversationPeers(adapter, binding.address))
-      }),
-      engine.configureFileTool(
+    this.promptsReady = engine
+      .configureFileTool(
         (sessionId) => {
           const binding = this.store.bySession(sessionId)
           return Boolean(
@@ -79,8 +72,16 @@ export class Host {
           )
         },
         (sessionId, messageId, callId, path, caption) => this.sendFile(sessionId, messageId, callId, path, caption)
-      ),
-    ]).then(() => {})
+      )
+      .then(() =>
+        engine.configureAccountPrompts((sessionId) => {
+          const binding = this.store.bySession(sessionId)
+          if (!binding || binding.archivedAt) return
+          const adapter = this.adapters.get(binding.adapterId)
+          if (!adapter || !this.ownsIdentity(adapter)) return
+          return accountPrompt(adapter, this.conversationPeers(adapter, binding.address))
+        })
+      )
   }
   private async sendFile(sessionId: string, messageId: string, callId: string, path: string, caption: string) {
     const binding = this.store.bySession(sessionId)

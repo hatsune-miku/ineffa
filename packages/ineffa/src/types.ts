@@ -44,6 +44,8 @@ export interface Adapter {
   readonly native?: unknown
   readonly identity: { id: string; name: string } | undefined
   readonly agentPrompt?: AgentPrompt
+  /** Platform-specific output constraints, supplied by the adapter. */
+  readonly promptInstructions?: string
   readonly model?: string
   readonly capabilities: { edit: boolean; attachments: boolean; history: boolean }
   start(context: AdapterContext): Promise<void>

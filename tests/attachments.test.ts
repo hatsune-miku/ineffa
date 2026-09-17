@@ -114,11 +114,14 @@ test('downloaded KOOK files enter the real engine with bounded bytes and stable 
 }, 30_000)
 
 test('send_file honors native permissions and surfaces a pending approval on the platform', async () => {
-  const f = await fixture((request) =>
-    request.messages.some((message) => message.role === 'tool')
-      ? 'DONE'
-      : { tool: 'send_file', input: { path: 'report.txt' } }
-  )
+  const f = await fixture((request) => {
+    const result = request.messages.filter((message) => message.role === 'tool').at(-1)
+    if (!result) return { tool: 'list_tools', input: {} }
+    if (String(result.content).includes('"name":"send_file"')) {
+      return { tool: 'send_file', input: { path: 'report.txt' } }
+    }
+    return 'DONE'
+  })
   try {
     const a = new TestAdapter('A', f.workspace)
     a.capabilities.attachments = true
@@ -142,11 +145,14 @@ test('send_file honors native permissions and surfaces a pending approval on the
 }, 30_000)
 
 test('send_file is model-callable, snapshots delivery and refuses paths outside the workspace', async () => {
-  const f = await fixture((request) =>
-    request.messages.some((message) => message.role === 'tool')
-      ? 'DONE'
-      : { tool: 'send_file', input: { path: 'report.txt', caption: '报告' } }
-  )
+  const f = await fixture((request) => {
+    const result = request.messages.filter((message) => message.role === 'tool').at(-1)
+    if (!result) return { tool: 'list_tools', input: {} }
+    if (String(result.content).includes('"name":"send_file"')) {
+      return { tool: 'send_file', input: { path: 'report.txt', caption: '报告' } }
+    }
+    return 'DONE'
+  })
   const app = createServer(f.host, {
     directory: f.workspace,
     accounts: new AccountsConfig(join(f.directory, 'accounts.json')),

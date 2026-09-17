@@ -269,11 +269,17 @@ WebUI 配置迁移使用版本化明文 JSON，包含 `accounts.json`、服务�
 
 Ineffa 配置负责 Adapter 实例及其 OpenCode Agent/工作目录引用，并提供账号级 `agentPrompt.identity`（Agent 身份）和 `agentPrompt.task`（该做什么）。模型、工具、Skills、MCP 和执行权限继续复用 OpenCode 配置。
 
-这两项是普通文本模板：`{displayName}` 使用账号配置的显示名称，`{platformId}` 使用 Adapter 已确认的真实平台账号 ID；只做一次字面替换，不执行表达式或递归展开。两项均为空时保留 OpenCode Agent 的默认基础提示词。填写后只替换基础提示词，保留上游环境、项目指令、工具和权限机制。
+这两项是普通文本模板：`{displayName}` 使用账号配置的显示名称，`{platformId}` 使用 Adapter 已确认的真实平台账号 ID；只做一次字面替换，不执行表达式或递归展开。未填写的项直接省略，不追加 OpenCode 默认编程助手身份。Ineffa 不从项目目录或用户目录继承外部 `AGENTS.md`，也关闭其后续自动指令更新。
 
-一个官方 OpenCode `context` 插件在主 Agent 每次模型请求前，通过现有 session 绑定读取当前账号配置。它替换固定版本 2.0.3 的基础 system 段，并附上当前账号及同会话其他账号的 `displayName`、`platformId` 和原生 mention。名单按账号 ID 稳定排序；不包含其他账号的身份/职责文本，不依赖对方先发言或创建 session，也不自动查询全平台成员。
+OpenCode 插件在每次主对话模型请求前，通过现有 session 绑定读取当前账号配置。系统提示只保留身份/职责、当前账号与同会话其他账号的 `displayName`、`platformId` 和原生 mention、简短运行环境，以及四组目录数量。名单按账号 ID 稳定排序；不包含其他账号的身份/职责文本，不依赖对方先发言或创建 session，也不自动查询全平台成员。平台格式限制由 Adapter 的 `promptInstructions` 提供；只有 KOOK Adapter 追加不支持 Markdown 表格、LaTeX、`#` 标题的限制。
 
-插件不调用模型、工具或远端 API，不维护另一份会话历史或提示词缓存。单独编辑名称和提示词只更新已持久化账号配置与当前 Adapter，在下一次模型请求生效，不重连平台、不重置 session。历史中已经存在的旧指令不被改写。配置文件账号重启后生效；重启时从账号配置和现有绑定重建插件行为。标题、压缩和其他辅助请求继续使用 OpenCode 原有流程。
+插件仅查询进程内的原生目录和会话配置，不额外调用模型或远端 API，不维护另一份会话历史。单独编辑名称和提示词只更新已持久化账号配置与当前 Adapter，在下一次模型请求生效，不重连平台、不重置 session。旧数据库中的指令记录不删除，但外部指令、完整技能目录和 Code Mode 目录不再作为指令来源参与上下文重建；已写入普通消息或旧压缩摘要的文本不追溯清洗，可用 `/new` 获得干净会话。标题、压缩和其他辅助请求继续由 OpenCode 管理。
+
+为减少首轮提示词和工具 schema，Ineffa 将原生工具按 Skills、浏览器、编程/OpenCode、其它四组延迟发布。首轮只提供 `list_skills`、`list_browser_tools`、`list_coding_tools` 和 `list_tools` 四个固定目录工具；模型调用目录工具后，该组的原生 OpenCode 工具在下一轮可用，执行、权限和历史仍由 OpenCode 负责。四个目录工具的调用保留在原生会话中，但不计入调试工具统计和平台状态消息。目录内容按当前会话权限生成；Skills 只返回可用技能的描述，实际内容仍通过原生 `skill` 工具按需加载。
+
+已展开的组从原生会话中成功的目录调用推导，重启无需额外恢复状态；新会话或压缩后不再包含该调用时可重新发现。目录调用仍有真实的模型往返开销，计入总计用时与实际 Token 用量；只排除其工具次数、工具耗时及工具状态展示，不人为扣减网络计时。
+
+OpenCode 2.0.3 的 Promise SDK 未将嵌入层替换参数转发到公开 `create` 函数，Ineffa 因此通过单一版本锁定的内部 Promise 入口安装指令和上下文替换层。升级 OpenCode SDK 时需先运行目录和指令隔离测试，再更新该适配入口。
 
 最小配置是普通代码；WebUI 可直接管理常用连接。配置文件示例：
 

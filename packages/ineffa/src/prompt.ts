@@ -57,6 +57,7 @@ export function accountPrompt(adapter: Adapter, peers: Adapter[]): AccountPrompt
     peers.length
       ? '通过上述原生 mention 提及其他 Agent。派发后可继续独立工作或结束本轮，由后续汇报继续，不阻塞等待。'
       : '',
+    adapter.promptInstructions,
   ]
     .filter(Boolean)
     .join('\n\n')

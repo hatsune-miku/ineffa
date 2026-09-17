@@ -2,6 +2,7 @@ import type { OpenCodeEvent } from '@opencode/sdk'
 
 import { Delivery } from './delivery'
 import type { OpenCodeBridge } from './opencode'
+import { isDirectoryTool } from './tool-directory'
 import type { Binding } from './types'
 
 type Turn = {
@@ -61,6 +62,7 @@ export class Presentation {
         changed = true
         break
       case 'session.tool.input.started':
+        if (isDirectoryTool(event.data.name)) break
         turn.tools.set(event.data.id, event.data.name)
         changed = true
         break

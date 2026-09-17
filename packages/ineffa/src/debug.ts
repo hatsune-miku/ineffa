@@ -2,6 +2,7 @@ import { Plugin } from '@opencode/plugin'
 import type { OpenCode, OpenCodeEvent } from '@opencode/sdk'
 
 import { observeFirstSse } from './debug-stream'
+import { isDirectoryTool } from './tool-directory'
 
 type RequestTiming = {
   startedAt: number
@@ -82,6 +83,7 @@ export class DebugTimings {
         })
       })
       await context.tool.hook('execute.before', (event) => {
+        if (isDirectoryTool(event.tool)) return
         this.trace(event.sessionID)?.tools.set(event.id, {
           name: event.tool,
           startedAt: Date.now(),
@@ -89,6 +91,7 @@ export class DebugTimings {
         })
       })
       await context.tool.hook('execute.after', (event) => {
+        if (isDirectoryTool(event.tool)) return
         const tool = this.traces.get(event.sessionID)?.tools.get(event.id)
         if (!tool) return
         tool.ended = performance.now()

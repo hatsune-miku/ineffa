@@ -67,7 +67,8 @@ test('streaming edits three independent messages, counts output plus reasoning, 
   let calls = 0
   const f = await fixture((request) => {
     if (modelAccount(request)?.platformId === 'B') return 'B_DONE'
-    if (++calls === 1)
+    if (++calls === 1) return { stream: [], tool: 'list_coding_tools', input: {}, usage: { output: 0, reasoning: 0 } }
+    if (calls === 2)
       return {
         stream: Array.from({ length: 6 }, () => ({ thinking: 'PRIVATE_REASONING', delay: 150 })),
         tool: 'write',
@@ -100,7 +101,8 @@ test('streaming edits three independent messages, counts output plus reasoning, 
     expect(thinking).toHaveLength(1)
     expect(tools[0]?.text).toBe('(1.223 k) write x1')
     expect(thinking[0]?.text).toBe('(1.223 k) Think complete')
-    expect(a.writes.some((item) => item.message.text === '(— tks) Think in progress')).toBe(true)
+    // The directory step already reported zero tokens before reasoning starts.
+    expect(a.writes.some((item) => item.message.text === '(0 tks) Think in progress')).toBe(true)
     expect(a.writes.some((item) => item.message.kind === 'tools' && item.edit)).toBe(true)
     expect(a.sent.filter((item) => item.kind === 'reply')).toHaveLength(1)
     expect(a.sent.find((item) => item.kind === 'reply')?.text).toContain('FINAL\n\n> Debug ·')
@@ -117,7 +119,7 @@ test('streaming edits three independent messages, counts output plus reasoning, 
     expect(a.writes.some((item) => item.message.text.includes('PRIVATE_REASONING'))).toBe(false)
     const final = a.sent.find((item) => item.kind === 'reply')!
     await f.host.receive('A', { ...human('quote', 'continue'), quote: final.text })
-    await until(() => calls === 3)
+    await until(() => calls === 4)
     expect(JSON.stringify(f.requests.at(-1))).not.toContain('Debug ·')
     expect(JSON.stringify(f.requests.at(-1))).not.toContain('(1.223 k)')
   } finally {

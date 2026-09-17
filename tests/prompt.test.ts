@@ -46,10 +46,10 @@ test('account prompts persist as templates, validate text, and expand only docum
   }
 }, 30_000)
 
-test('per-account system prompts preserve OpenCode context, isolate scopes, and see peers before their first message', async () => {
+test('per-account prompts exclude external instructions, isolate scopes, and see peers before their first message', async () => {
   const f = await fixture(() => 'DONE')
   try {
-    await writeFile(join(f.workspace, 'AGENTS.md'), 'PROJECT_GUIDANCE_TO_KEEP')
+    await writeFile(join(f.workspace, 'AGENTS.md'), 'PROJECT_GUIDANCE_TO_IGNORE')
     const a = new TestAdapter('A', f.workspace)
     a.name = '研究员'
     a.platformId = '10001'
@@ -74,7 +74,7 @@ test('per-account system prompts preserve OpenCode context, isolate scopes, and 
     const system = systemText(f.requests[0]!)
     expect(system).toStartWith('Agent 身份：\n你是 研究员，账号 10001。')
     expect(system).toContain('A_PRIVATE_TASK')
-    expect(system).toContain('PROJECT_GUIDANCE_TO_KEEP')
+    expect(JSON.stringify(f.requests[0])).not.toContain('PROJECT_GUIDANCE_TO_IGNORE')
     expect(system).toContain('"displayName":"审阅员","platformId":"10002"')
     expect(system).not.toContain('B_PRIVATE_TASK')
     for (const id of ['C', 'D', 'E', 'F']) expect(system).not.toContain(`"platformId":"${id}"`)
@@ -108,8 +108,9 @@ test('profile and peer changes apply on tool continuation without resetting hist
   const f = await fixture(async () => {
     if (++calls === 1) {
       await gate
-      return { tool: 'write', input: { path: 'progress.txt', content: 'WORK_TO_KEEP' } }
+      return { tool: 'list_coding_tools', input: {} }
     }
+    if (calls === 2) return { tool: 'write', input: { path: 'progress.txt', content: 'WORK_TO_KEEP' } }
     return 'DONE'
   })
   try {
@@ -131,15 +132,15 @@ test('profile and peer changes apply on tool continuation without resetting hist
     expect(system).toContain('TASK_NEW A')
     expect(system).not.toContain('IDENTITY_OLD')
     expect(system).not.toContain('"platformId":"B"')
-    expect(JSON.stringify(f.requests[1]!.messages)).toContain('WORK_TO_KEEP')
+    expect(JSON.stringify(f.requests[2]!.messages)).toContain('WORK_TO_KEEP')
     expect(f.store.current('A', human('', '').address.id)!.sessionId).toBe(session)
-    expect(f.requests).toHaveLength(2)
+    expect(f.requests).toHaveLength(3)
 
     a.agentPrompt = undefined
     await f.host.receive('A', human('clear', 'CONTINUE'))
     await until(() => a.sent.filter((item) => item.kind === 'reply').length === 2)
-    expect(systemText(f.requests[2]!)).not.toContain('IDENTITY_NEW')
-    expect(systemText(f.requests[2]!)).toContain('当前平台账号：')
+    expect(systemText(f.requests[3]!)).not.toContain('IDENTITY_NEW')
+    expect(systemText(f.requests[3]!)).toContain('当前平台账号：')
   } finally {
     release()
     await f.close()
