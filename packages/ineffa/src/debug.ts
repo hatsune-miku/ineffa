@@ -139,6 +139,7 @@ export class DebugTimings {
     const fields = [
       `连接/响应头 ${headers}`,
       `首字 ${milliseconds(firstMs)}`,
+      `服务排队 ${firstMs === undefined ? '未采集' : debugDuration(firstMs)}`,
       `总计 ${debugDuration(endedAt - trace.startedAt)}`,
       `缓存命中 ${cache}`,
       `工具 ${tools.length} 次 / ${debugDuration(totalTools)}${completed.length < tools.length ? '（未全部结束）' : ''}`,

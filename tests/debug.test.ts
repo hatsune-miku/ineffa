@@ -60,6 +60,7 @@ test('debug measures the first remote SSE before thinking/tools/text and stays o
     expect(first[0]).toBeGreaterThanOrEqual(160)
     // The initial role SSE arrives before the deliberately delayed reasoning and tool call.
     expect(first[0]).toBeLessThan(1500)
+    expect(output).toMatch(/服务排队 [01]s ·/)
     expect(output).toMatch(/总计 (?:\d+h )?(?:\d+m )?\d+s ·/)
     expect(output).toMatch(/工具 1 次 \/ (?:\d+h )?(?:\d+m )?\d+s/)
     expect(JSON.stringify(f.requests)).toContain('ACCOUNT_PROMPT_MARKER')
@@ -110,6 +111,7 @@ test('debug reports failed requests honestly and resets totals for the next turn
     const reply = adapter.sent.find((item) => item.text.includes('AUTH_FAILED'))!.text
     expect(reply).toContain('HTTP 401')
     expect(reply).toContain('首字 未采集')
+    expect(reply).toContain('服务排队 未采集')
     expect(reply).toContain('工具 0 次')
     expect(reply).toContain('缓存命中 —')
     const binding = f.store.current('A', 'channel:guild:1')!
