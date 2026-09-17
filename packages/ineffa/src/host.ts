@@ -1,13 +1,15 @@
-import { resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { slashCommand } from './commands'
 import { Delivery } from './delivery'
+import { snapshotFile } from './files'
 import { conversationContext, messageContext } from './message-context'
 import { modelReference } from './model'
 import { type OpenCodeBridge, sourceInputId } from './opencode'
 import { Presentation } from './presentation'
 import { accountPrompt } from './prompt'
+import { Questions } from './questions'
 import { Store, identity } from './store'
 import {
   type Adapter,
@@ -27,6 +29,7 @@ export class Host {
   readonly statuses = new Map<string, AdapterStatus>()
   readonly delivery: Delivery
   private readonly presentation: Presentation
+  private readonly questions: Questions
   private identityOwners = new Map<string, string>()
   private listeners = new Set<(event: HostEvent) => void>()
   private submissions = new Map<string, Promise<unknown>>()
@@ -54,13 +57,53 @@ export class Host {
       (event) => this.emit(event)
     )
     this.presentation = new Presentation(this.delivery)
-    this.promptsReady = engine.configureAccountPrompts((sessionId) => {
-      const binding = this.store.bySession(sessionId)
-      if (!binding || binding.archivedAt) return
-      const adapter = this.adapters.get(binding.adapterId)
-      if (!adapter || !this.ownsIdentity(adapter)) return
-      return accountPrompt(adapter, this.conversationPeers(adapter, binding.address))
-    })
+    this.questions = new Questions(
+      store,
+      engine,
+      (id) => this.adapter(id),
+      (id) => this.delivery.enqueue(id)
+    )
+    this.promptsReady = Promise.all([
+      engine.configureAccountPrompts((sessionId) => {
+        const binding = this.store.bySession(sessionId)
+        if (!binding || binding.archivedAt) return
+        const adapter = this.adapters.get(binding.adapterId)
+        if (!adapter || !this.ownsIdentity(adapter)) return
+        return accountPrompt(adapter, this.conversationPeers(adapter, binding.address))
+      }),
+      engine.configureFileTool(
+        (sessionId) => {
+          const binding = this.store.bySession(sessionId)
+          return Boolean(
+            binding && !binding.archivedAt && this.adapters.get(binding.adapterId)?.capabilities.attachments
+          )
+        },
+        (sessionId, messageId, callId, path, caption) => this.sendFile(sessionId, messageId, callId, path, caption)
+      ),
+    ]).then(() => {})
+  }
+  private async sendFile(sessionId: string, messageId: string, callId: string, path: string, caption: string) {
+    const binding = this.store.bySession(sessionId)
+    if (!binding || binding.archivedAt) throw new Error('此工具只能用于当前平台会话。')
+    const adapter = this.adapter(binding.adapterId)
+    if (!adapter.capabilities.attachments || !adapter.canAccess(binding.address))
+      throw new Error('此会话不支持发送附件。')
+    if (caption.length > 2_000) throw new Error('附件说明不能超过 2,000 字符。')
+    const sourceId = `file:${messageId}:${callId}`
+    let output = this.store.output(identity('out_', binding.id, sourceId))
+    if (!output) {
+      const file = await snapshotFile(binding.directory, path, join(dirname(this.engine.databasePath), 'attachments'))
+      const inputId = await this.engine.inputForAssistant(sessionId, messageId)
+      if (this.store.binding(binding.id).archivedAt) throw new Error('此会话已归档。')
+      output = this.store.prepareOutput(binding.id, sourceId, inputId ?? null, caption, {
+        kind: 'attachment',
+        files: [file],
+      })
+    }
+    await this.delivery.enqueue(output.id)
+    const result = this.store.output(output.id)!
+    if (result.state === 'sent') return `附件已发送：${result.files?.[0]?.name}。消息 ID：${result.messageId}`
+    return `附件投递${result.state === 'unknown' ? '结果未知，请用户核实，勿重复发送' : '失败'}：${result.error}`
   }
   private conversationPeers(adapter: Adapter, address: Address): Adapter[] {
     if (!adapter.canAccess(address)) return []
@@ -183,6 +226,7 @@ export class Host {
       if (!this.adapters.has(binding.adapterId)) continue
       try {
         await this.ensure(binding)
+        await this.questions.recover(this.store.binding(binding.id))
       } catch (error) {
         this.emit({ type: 'error', bindingId: binding.id, message: errorMessage(error) })
       }
@@ -237,18 +281,24 @@ export class Host {
         ))
     )
       return
-    const wake =
-      (!message.author.bot || Boolean(source)) &&
-      (message.address.kind === 'direct' || message.mentions.includes(adapter.identity?.id ?? ''))
-    const command = slashCommand(adapter, { ...message, author: { ...message.author, bot: false } })
-    if (command && (!wake || message.author.bot)) return
-    if (!message.text.trim() && !message.files?.length) return
-    if (message.text.length > 100_000)
-      throw new IneffaError('message_too_large', '消息超过 100,000 字符，请拆分后发送。', 413)
-    let binding = this.store.ensure(adapterId, message.address, adapter.agent, resolve(adapter.directory))
     const id = identity('msg_', adapterId, message.address.id, message.id)
     const existing = this.store.inbound(id)
     if (existing) return existing
+    const command = slashCommand(adapter, { ...message, author: { ...message.author, bot: false } })
+    if (message.text.length > 100_000)
+      throw new IneffaError('message_too_large', '消息超过 100,000 字符，请拆分后发送。', 413)
+    if (!command && (await this.questions.receive(adapterId, message))) {
+      this.emit({ type: 'change' })
+      return
+    }
+    const wake =
+      (!message.author.bot || Boolean(source)) &&
+      (message.address.kind === 'direct' ||
+        message.mentions.includes(adapter.identity?.id ?? '') ||
+        Boolean(command && this.questions.expects(adapterId, message)))
+    if (command && (!wake || message.author.bot)) return
+    if (!message.text.trim() && !message.files?.length) return
+    let binding = this.store.ensure(adapterId, message.address, adapter.agent, resolve(adapter.directory))
     return this.serial(binding.id, async () => {
       const duplicate = this.store.inbound(id)
       if (duplicate) return duplicate
@@ -367,7 +417,13 @@ export class Host {
         if (input.command) {
           throw new IneffaError('command_not_found', `不支持 /${input.command.name}。`)
         }
-        await this.engine.submit(binding, input, this.store.contextFiles(input.id))
+        const adapter = this.adapter(binding.adapterId)
+        const files = [...this.store.contextFiles(input.id), ...(input.message.files ?? [])]
+        await this.engine.submit(
+          binding,
+          input,
+          adapter.prepareAttachments ? await adapter.prepareAttachments(files) : files
+        )
       }
       this.store.inboundState(input.id, 'admitted')
     } catch (error) {
@@ -463,12 +519,24 @@ export class Host {
                 ordinal: event.data.ordinal,
                 text: event.data.delta,
               })
-          } else if (
-            event.type === 'permission.asked' ||
-            event.type === 'form.created' ||
-            event.type === 'session.status' ||
-            event.type === 'server.connected'
-          ) {
+          } else if (event.type === 'form.created') {
+            const binding = this.store.bySession(event.data.form.sessionID)
+            if (binding && !binding.archivedAt) await this.questions.created(binding, event.data.form)
+            this.emit({ type: 'change', bindingId: binding?.id })
+          } else if (event.type === 'form.replied' || event.type === 'form.cancelled') {
+            this.questions.closed(event.data.id)
+            this.emit({ type: 'change' })
+          } else if (event.type === 'permission.asked') {
+            const binding = this.store.bySession(event.data.sessionID)
+            if (binding && !binding.archivedAt && this.adapter(binding.adapterId).platform !== 'web') {
+              this.questions.notice(
+                binding,
+                `permission:${event.data.id}`,
+                `需要权限确认：${event.data.action}\n请在 WebUI 中允许或拒绝。`
+              )
+            }
+            this.emit({ type: 'change', bindingId: binding?.id })
+          } else if (event.type === 'session.status' || event.type === 'server.connected') {
             this.emit({ type: 'change' })
           }
         }
@@ -477,6 +545,14 @@ export class Host {
           this.emit({ type: 'error', message: `实时连接中断，正在重连：${errorMessage(error)}` })
       }
       await delay(backoff, undefined, { signal: this.controller.signal }).catch(() => {})
+      if (!this.controller.signal.aborted) {
+        for (const binding of this.store.bindings()) {
+          if (this.adapters.has(binding.adapterId))
+            await this.questions
+              .recover(binding)
+              .catch((error) => this.emit({ type: 'error', bindingId: binding.id, message: errorMessage(error) }))
+        }
+      }
       backoff = Math.min(backoff * 2, 15_000)
     }
   }
@@ -503,6 +579,7 @@ export class Host {
             address: binding.address,
             author: { id: adapter.identity.id, name: adapter.name, bot: true },
             text: output.text,
+            files: output.files,
             mentions,
             createdAt: output.createdAt,
             quote: parent?.message.text,
@@ -529,6 +606,7 @@ export class Host {
     const b = this.store.binding(bindingId)
     const queued = cancelQueued ? await this.engine.pending(b.sessionId) : []
     await this.engine.stop(b.sessionId, cancelQueued)
+    this.questions.closeBinding(bindingId)
     this.presentation.interrupt(b)
     this.engine.debug.clear(b.sessionId)
     for (const item of queued) if (this.store.inbound(item.id)) this.store.inboundState(item.id, 'cancelled')
@@ -544,6 +622,7 @@ export class Host {
     await this.serial(bindingId, async () => {
       await this.stopBinding(bindingId)
       this.store.archive(bindingId)
+      this.questions.closeBinding(bindingId)
       await this.stopWatching(bindingId)
       this.presentation.clear(this.store.binding(bindingId))
     })
@@ -617,6 +696,7 @@ export class Host {
       ...[...this.watchers.values()].map((watcher) => watcher.promise),
       ...this.submissions.values(),
     ])
+    await this.questions.flush()
     await this.delivery.flush()
     await Promise.allSettled([...this.adapters.values()].map((adapter) => adapter.stop()))
     await this.engine.close()

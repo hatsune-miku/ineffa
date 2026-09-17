@@ -7,6 +7,7 @@ import { OpenCode, type OpenCodeEvent } from '@opencode/sdk'
 import { DebugTimings } from './debug'
 import { modelReference } from './model'
 import type { AccountPrompt } from './prompt'
+import { identity } from './store'
 import type { Attachment, Binding, Inbound } from './types'
 
 export type EngineMessage = Awaited<ReturnType<OpenCode.Interface['sessions']['message']>>
@@ -26,6 +27,101 @@ export class OpenCodeBridge {
     readonly configDirectory: string,
     readonly databasePath: string
   ) {}
+  async configureFileTool(
+    available: (sessionId: string) => boolean,
+    send: (sessionId: string, messageId: string, callId: string, path: string, caption: string) => Promise<string>
+  ) {
+    const engine = this
+    await this.native.plugin(
+      Plugin.define({
+        id: 'ineffa.send-file',
+        async setup(context) {
+          await context.tool.transform((editor) =>
+            editor.add({
+              name: 'send_file',
+              description:
+                'Send a file or image from the current account workspace to the current platform conversation. Uploads and sends an actual attachment. Use only for files intended for the user. Relative paths resolve within the workspace. Maximum 20 MiB. Do not repeat a delivery reported as unknown.',
+              options: { codemode: false },
+              input: {
+                type: 'object',
+                properties: {
+                  path: { type: 'string', description: 'Local file path inside the account workspace.' },
+                  caption: { type: 'string', description: 'Optional short caption.' },
+                },
+                required: ['path'],
+                additionalProperties: false,
+              },
+              async execute(input, tool) {
+                const value = input as { path: string; caption?: string }
+                await engine.authorizeFile(tool.sessionID, tool.agent, tool.messageID, tool.id, value.path)
+                return { content: await send(tool.sessionID, tool.messageID, tool.id, value.path, value.caption ?? '') }
+              },
+            })
+          )
+          await context.session.hook('context', (event) => {
+            if (!available(event.sessionID)) delete event.tools.send_file
+          })
+        },
+      })
+    )
+  }
+  private async authorizeFile(sessionId: string, agent: string, messageId: string, callId: string, path: string) {
+    const controller = new AbortController()
+    const requestId = identity('per_', sessionId, messageId, callId)
+    let decide!: (allowed: boolean) => void
+    const decision = new Promise<boolean>((resolve) => {
+      decide = resolve
+    })
+    const events = this.events(controller.signal)
+    const listener = (async () => {
+      try {
+        for await (const event of events) {
+          if (event.type === 'permission.replied' && event.data.requestID === requestId) {
+            decide(event.data.reply !== 'reject')
+            return
+          }
+          if (event.type === 'session.execution.interrupted' && event.data.sessionID === sessionId) return
+        }
+      } finally {
+        decide(false)
+      }
+    })().catch(() => {
+      decide(false)
+    })
+    let waiting = false
+    try {
+      const result = await this.native.permission.create({
+        id: requestId,
+        sessionID: sessionId,
+        agent,
+        action: 'send_file',
+        resources: [path],
+        source: { type: 'tool', messageID: messageId, id: callId },
+      })
+      waiting = result.effect === 'ask'
+      if (result.effect === 'deny' || (waiting && !(await decision))) throw new Error('未获准发送此附件。')
+      waiting = false
+    } finally {
+      controller.abort()
+      await listener
+      if (waiting)
+        await this.native.permission
+          .reply({ sessionID: sessionId, requestID: requestId, reply: 'reject' })
+          .catch(() => {})
+    }
+  }
+  async inputForAssistant(sessionId: string, messageId: string): Promise<string | undefined> {
+    let cursor: string | undefined
+    let found = false
+    do {
+      const page = await this.messages(sessionId, cursor)
+      for (const message of page.data) {
+        if (message.id === messageId) found = true
+        else if (found && message.type === 'user') return sourceInputId(message)
+      }
+      cursor = page.cursor.next ?? undefined
+    } while (cursor)
+  }
   async configureAccountPrompts(resolvePrompt: (sessionId: string) => AccountPrompt | undefined) {
     await this.native.plugin(
       Plugin.define({
@@ -73,7 +169,7 @@ export class OpenCodeBridge {
       location: { directory: binding.directory },
     })
   }
-  async submit(binding: Binding, input: Inbound, contextFiles: Attachment[] = []) {
+  async submit(binding: Binding, input: Inbound, files: Attachment[] = input.message.files ?? []) {
     if (input.command) {
       throw new Error('控制命令不能提交到模型上下文。')
     }
@@ -81,7 +177,7 @@ export class OpenCodeBridge {
       sessionID: binding.sessionId,
       id: input.id,
       text: input.prompt,
-      files: [...contextFiles, ...(input.message.files ?? [])],
+      files,
       delivery: input.message.mode ?? 'queue',
       metadata: {
         ineffa: {

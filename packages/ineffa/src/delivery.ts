@@ -121,6 +121,7 @@ export class Delivery {
           replyTo: output.inputId ? this.store.inbound(output.inputId)?.message.id : undefined,
           partial: !output.complete,
           kind: output.kind,
+          files: output.files,
         }
         this.lastWrite.set(id, Date.now())
         const result =
@@ -140,7 +141,7 @@ export class Delivery {
     if (!output) return
     if (output.state === 'pending') void this.enqueue(id)
     if (output.state === 'sent' && output.complete && output.deliveredRevision >= output.revision && !output.relayed) {
-      if (output.kind === 'reply') await this.relay(output, binding)
+      if (output.kind === 'reply' || output.kind === 'attachment') await this.relay(output, binding)
       this.store.relayed(id)
       this.lastWrite.delete(id)
     }

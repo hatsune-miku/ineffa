@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { createHash, randomUUID } from 'node:crypto'
 
-import type { Address, Binding, Inbound, Outbound, OutputKind } from './types'
+import type { Address, Attachment, Binding, Inbound, Outbound, OutputKind } from './types'
 import { IneffaError } from './types'
 
 export function identity(prefix: string, ...parts: string[]) {
@@ -19,7 +19,12 @@ function inbound(row: Row): Inbound {
   } as Inbound
 }
 function outbound(row: Row): Outbound {
-  return { ...row, relayed: Boolean(row.relayed), complete: Boolean(row.complete) } as Outbound
+  return {
+    ...row,
+    files: row.files ? JSON.parse(String(row.files)) : undefined,
+    relayed: Boolean(row.relayed),
+    complete: Boolean(row.complete),
+  } as Outbound
 }
 
 export class Store {
@@ -28,7 +33,7 @@ export class Store {
     this.db = new Database(path, { create: true, strict: true })
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;')
     const version = this.db.query('PRAGMA user_version').get() as { user_version: number }
-    if (version.user_version > 6) throw new Error('投递数据库来自较新的 Ineffa 版本，请恢复配套备份。')
+    if (version.user_version > 7) throw new Error('投递数据库来自较新的 Ineffa 版本，请恢复配套备份。')
     this.db.transaction(() => {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS bindings (
@@ -73,7 +78,21 @@ export class Store {
         ALTER TABLE inbound ADD COLUMN contextInputId TEXT;
         CREATE INDEX inbound_context ON inbound(bindingId,state,contextInputId);
       `)
-      this.db.exec('PRAGMA user_version=6;')
+      if (version.user_version < 7) {
+        this.db.exec(`
+          ALTER TABLE outbound ADD COLUMN files TEXT;
+          CREATE TABLE platform_questions (
+            id TEXT PRIMARY KEY, bindingId TEXT NOT NULL REFERENCES bindings(id), inputId TEXT,
+            targetId TEXT NOT NULL, form TEXT NOT NULL, answer TEXT NOT NULL DEFAULT '{}',
+            state TEXT NOT NULL DEFAULT 'pending', createdAt INTEGER NOT NULL
+          );
+          CREATE INDEX platform_questions_pending ON platform_questions(state,bindingId,targetId);
+          CREATE TABLE question_receipts (
+            id TEXT PRIMARY KEY, questionId TEXT NOT NULL REFERENCES platform_questions(id)
+          );
+        `)
+      }
+      this.db.exec('PRAGMA user_version=7;')
     })()
     // A process may have died after the remote side accepted a send. Do not resend blindly.
     this.db
@@ -155,6 +174,12 @@ export class Store {
   remove(id: string) {
     this.db.transaction(() => {
       this.binding(id)
+      this.db
+        .query(
+          'DELETE FROM question_receipts WHERE questionId IN (SELECT id FROM platform_questions WHERE bindingId=?)'
+        )
+        .run(id)
+      this.db.query('DELETE FROM platform_questions WHERE bindingId=?').run(id)
       this.db.query('DELETE FROM outbound WHERE bindingId=?').run(id)
       this.db.query('DELETE FROM inbound WHERE bindingId=?').run(id)
       this.db.query('DELETE FROM debug_reports WHERE bindingId=?').run(id)
@@ -195,7 +220,7 @@ export class Store {
       )
       .get(text, text, messageId ?? null) as { text: string; kind: string; sourceId: string } | null
     if (!row) return text
-    if (row.kind !== 'reply' || /^(command|input-error|limit):/.test(row.sourceId)) return ''
+    if (!['reply', 'attachment'].includes(row.kind) || /^(command|input-error|limit):/.test(row.sourceId)) return ''
     return row.text
   }
   checkpoint(id: string, cursor: number, inputId?: string) {
@@ -296,22 +321,23 @@ export class Store {
     sourceId: string,
     inputId: string | null,
     text: string,
-    options: { complete?: boolean; kind?: OutputKind } = {}
+    options: { complete?: boolean; kind?: OutputKind; files?: Attachment[] } = {}
   ) {
     const id = identity('out_', bindingId, sourceId)
     const complete = options.complete ?? true
+    const files = options.files?.length ? JSON.stringify(options.files) : null
     this.db
       .query(
-        "INSERT OR IGNORE INTO outbound(id,bindingId,sourceId,inputId,text,state,createdAt,kind,complete) VALUES(?,?,?,?,?,'pending',?,?,?)"
+        "INSERT OR IGNORE INTO outbound(id,bindingId,sourceId,inputId,text,files,state,createdAt,kind,complete) VALUES(?,?,?,?,?,?,'pending',?,?,?)"
       )
-      .run(id, bindingId, sourceId, inputId, text, Date.now(), options.kind ?? 'reply', complete ? 1 : 0)
+      .run(id, bindingId, sourceId, inputId, text, files, Date.now(), options.kind ?? 'reply', complete ? 1 : 0)
     this.db
       .query(
-        `UPDATE outbound SET text=?,inputId=?,complete=?,revision=revision+1,attempts=0,
+        `UPDATE outbound SET text=?,files=?,inputId=?,complete=?,revision=revision+1,attempts=0,
       state=CASE WHEN state='sent' THEN 'pending' ELSE state END
-      WHERE id=? AND complete=0 AND (text<>? OR complete<>? OR inputId IS NOT ?)`
+      WHERE id=? AND complete=0 AND (text<>? OR files IS NOT ? OR complete<>? OR inputId IS NOT ?)`
       )
-      .run(text, inputId, complete ? 1 : 0, id, text, complete ? 1 : 0, inputId)
+      .run(text, files, inputId, complete ? 1 : 0, id, text, files, complete ? 1 : 0, inputId)
     return this.output(id)!
   }
   output(id: string) {

@@ -16,11 +16,12 @@ export type IncomingMessage = {
 }
 export type SendResult =
   { status: 'sent'; messageId: string } | { status: 'failed' | 'unknown'; error: string; retryAfterMs?: number }
-export type OutputKind = 'reply' | 'tools' | 'thinking' | 'notice'
+export type OutputKind = 'reply' | 'tools' | 'thinking' | 'notice' | 'attachment'
 export type OutgoingMessage = {
   id: string
   address: Address
   text: string
+  files?: Attachment[]
   replyTo?: string
   partial?: boolean
   kind?: OutputKind
@@ -54,6 +55,8 @@ export interface Adapter {
   send(message: OutgoingMessage): Promise<SendResult>
   edit?(messageId: string, message: OutgoingMessage): Promise<SendResult>
   readHistory?(address: Address, before?: string): Promise<IncomingMessage[]>
+  /** Materialize platform attachments into URIs accepted by the execution engine. */
+  prepareAttachments?(files: Attachment[]): Promise<Attachment[]>
   mentions(text: string): string[]
   mention(identity: { id: string; name: string }): string
 }
@@ -94,6 +97,7 @@ export type Outbound = {
   sourceId: string
   inputId: string | null
   text: string
+  files?: Attachment[]
   state: 'pending' | 'sending' | 'sent' | 'failed' | 'unknown'
   messageId: string | null
   error: string | null

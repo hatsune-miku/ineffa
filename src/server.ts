@@ -1,7 +1,8 @@
 import { Host, IneffaError, errorMessage, identity, modelReference, sourceInputId } from 'ineffa'
 import { kook } from 'ineffa-kook'
 import { createHash, timingSafeEqual } from 'node:crypto'
-import { relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { AccountsConfig, validateAccount } from './config'
 import { ConfigTransfer } from './config-transfer'
@@ -163,6 +164,26 @@ export function createServer(host: Host, options: ServerOptions) {
         ) {
           throw new IneffaError('import_pending', '配置导入已保存，请重启服务后再编辑配置。', 409)
         }
+        const attachmentMatch = /^\/api\/attachments\/(out_[a-f0-9]+)\/(\d+)$/.exec(path)
+        if (attachmentMatch && request.method === 'GET') {
+          const output = host.store.output(attachmentMatch[1]!)
+          const attachment = output?.files?.[Number(attachmentMatch[2])]
+          if (!attachment?.uri.startsWith('file:')) throw new IneffaError('attachment_not_found', '附件不存在。', 404)
+          const target = fileURLToPath(attachment.uri)
+          const local = relative(resolve(dirname(host.engine.databasePath), 'attachments'), target)
+          if (!local || isAbsolute(local) || local.startsWith('..'))
+            throw new IneffaError('attachment_forbidden', '无法访问此附件。', 403)
+          const file = Bun.file(target)
+          if (!(await file.exists())) throw new IneffaError('attachment_not_found', '附件不存在。', 404)
+          return new Response(file, {
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(attachment.name ?? 'attachment')}`,
+              'Cache-Control': 'no-store',
+              'X-Content-Type-Options': 'nosniff',
+            },
+          })
+        }
         if (path === '/api/health')
           return Response.json({
             status: 'ready',
@@ -293,8 +314,12 @@ export function createServer(host: Host, options: ServerOptions) {
               rows.push(
                 ...host.store.commandNotices(binding.id).map((notice) => ({
                   id: notice.id,
-                  role: 'system' as const,
+                  role: notice.kind === 'attachment' ? ('assistant' as const) : ('system' as const),
                   text: notice.text,
+                  files: notice.files?.map((file, index) => ({
+                    name: file.name,
+                    uri: `/api/attachments/${notice.id}/${index}`,
+                  })),
                   createdAt: notice.createdAt,
                   completed: notice.complete,
                 }))

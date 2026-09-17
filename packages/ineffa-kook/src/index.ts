@@ -14,6 +14,8 @@ import { resolve } from 'node:path'
 
 import { type KEvent, type KResponseExt, type KTextChannelExtra, KookClient } from '@kookapp/js-sdk'
 
+import { kookCard, kookContent, prepareKookAttachments } from './attachments'
+
 export interface KookOptions extends AccountProfile {
   id: string
   token: string
@@ -64,7 +66,7 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
   function normalize(event: KEvent<KTextChannelExtra>): IncomingMessage | undefined {
     const direct = event.channel_type === 'PERSON'
     if (event.channel_type !== 'GROUP' && !direct) return
-    if (![1, 2, 3, 4, 8, 9].includes(event.type)) return
+    if (![1, 2, 3, 4, 8, 9, 10].includes(event.type)) return
     const extra = event.extra
     const address: Address = direct
       ? { id: `dm:${event.author_id}`, title: extra.author?.username ?? event.author_id, kind: 'direct' }
@@ -74,7 +76,7 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
           kind: 'channel',
           guildId: extra.guild_id,
         }
-    const attachment = [2, 3, 4, 8].includes(event.type)
+    const content = kookContent(event.type, event.content, (extra as unknown as { attachments?: unknown }).attachments)
     const quote = (
       extra as unknown as {
         quote?: {
@@ -92,8 +94,8 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
         name: extra.author?.nickname || extra.author?.username || event.author_id,
         bot: Boolean(extra.author?.bot),
       },
-      text: attachment ? '附件' : event.content,
-      mentions: (extra.mention ?? []).filter((id) => kookMentions(event.content).includes(id)),
+      text: content.text,
+      mentions: (extra.mention ?? []).filter((id) => kookMentions(content.text).includes(id)),
       createdAt: event.msg_timestamp,
       quote: quote?.content,
       quoteId: quote?.id,
@@ -104,30 +106,8 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
             bot: Boolean(quote.author.bot),
           }
         : undefined,
-      files: attachment ? [{ uri: event.content }] : undefined,
+      files: content.files,
     }
-  }
-  async function contentFor(message: OutgoingMessage): Promise<string> {
-    let content = message.text
-    if (message.partial) return content.slice(0, 7_500)
-    if (content.length > 7_500) {
-      // Keep one public message and one receipt; the full reply remains accessible as a platform attachment.
-      try {
-        const data = new FormData()
-        data.append('file', new File([content], 'reply.md', { type: 'text/markdown;charset=utf-8' }))
-        const asset = await client.api.uploadAsset(data)
-        if (!asset.success || !asset.data?.url || !/^https:\/\//.test(asset.data.url))
-          throw new Error('完整回复附件上传失败。')
-        const mentions = kookMentions(content)
-          .map((id) => `(met)${id}(met)`)
-          .join(' ')
-        content = `回复较长，已保存为附件：[查看完整回复](${asset.data.url})\n\n${mentions}`
-        if (content.length > 7_500) throw new Error('提及人数过多，无法投递这条回复。')
-      } catch (error) {
-        throw new Error(`附件上传失败：${errorMessage(error)}`)
-      }
-    }
-    return content
   }
   const adapter: Adapter & { native: KookClient } = {
     id: options.id,
@@ -160,6 +140,7 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
       if (address.kind !== 'channel' || !canAccess(address)) return
       return `channel:${address.id.split(':').at(-1)}`
     },
+    prepareAttachments: (files) => prepareKookAttachments(resolve(options.directory), files),
     mentions: kookMentions,
     mention: ({ id }) => `(met)${id}(met)`,
     async start(next) {
@@ -178,7 +159,9 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
             .catch((error) => context?.status({ state: 'error', error: errorMessage(error) }))
         })
         client.on('reconnecting', () => context?.status({ state: 'connecting' }))
-        client.on('open', () => context?.status({ state: 'connected' }))
+        client.on('stateChange', (state) => {
+          if (state === 'CONNECTED') context?.status({ state: 'connected' })
+        })
         client.on('close', () => context?.status({ state: 'disconnected' }))
         client.on('error', (message) => context?.status({ state: 'error', error: String(message) }))
       }
@@ -193,11 +176,11 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
       const target = message.address.id.split(':').at(-1)!
       let content: string
       try {
-        content = await contentFor(message)
+        content = await kookCard(client, message, kookMentions)
       } catch (error) {
         return { status: 'failed', error: errorMessage(error) }
       }
-      const props = { type: 9 as const, target_id: target, content, nonce: message.id, quote: message.replyTo }
+      const props = { type: 10 as const, target_id: target, content, nonce: message.id, quote: message.replyTo }
       const result =
         message.address.kind === 'direct'
           ? await client.api.createDirectMessage(props)
@@ -212,7 +195,7 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
       if (!canAccess(message.address)) return { status: 'failed', error: '当前账号不允许访问此会话。' }
       let content: string
       try {
-        content = await contentFor(message)
+        content = await kookCard(client, message, kookMentions)
       } catch (error) {
         return { status: 'failed', error: errorMessage(error) }
       }
@@ -233,12 +216,14 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
       const items = Array.isArray(result.data?.items) ? (result.data.items as Record<string, unknown>[]) : []
       return items.map((item) => {
         const author = (item.author ?? {}) as Record<string, unknown>
+        const content = kookContent(Number(item.type ?? 9), String(item.content ?? ''), item.attachments)
         return {
           id: String(item.id ?? item.msg_id),
           address,
           author: { id: String(author.id), name: String(author.username ?? author.id), bot: Boolean(author.bot) },
-          text: String(item.content ?? ''),
-          mentions: kookMentions(String(item.content ?? '')),
+          text: content.text,
+          files: content.files,
+          mentions: kookMentions(content.text),
           createdAt: Number(item.create_at ?? item.msg_timestamp ?? 0),
         }
       })

@@ -43,7 +43,7 @@ export function Message({ message }: { message: MessageView }) {
         )}
         {message.files?.map(
           (file) =>
-            /^https?:\/\//.test(file.uri) && (
+            (/^https?:\/\//.test(file.uri) || /^\/api\/attachments\/out_[a-f0-9]+\/\d+$/.test(file.uri)) && (
               <a
                 className="attachment-link link"
                 href={file.uri}

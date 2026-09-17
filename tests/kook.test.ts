@@ -138,6 +138,7 @@ test('long KOOK replies use a full markdown attachment and preserve native menti
     return { success: true, code: 0, message: '', data: { url: 'https://test.kook.example/reply.md' } } as never
   }
   adapter.native.api.createMessage = async (data) => {
+    expect(data.type).toBe(10)
     posted = data.content
     return { success: true, code: 0, message: '', data: { msg_id: 'long-message' } } as never
   }
@@ -153,6 +154,11 @@ test('long KOOK replies use a full markdown attachment and preserve native menti
   expect(uploaded).toBe(content)
   expect(posted.length).toBeLessThan(7500)
   expect(kookMentions(posted)).toEqual(['456'])
+  expect(JSON.parse(posted)[0].modules).toContainEqual({
+    type: 'file',
+    src: 'https://test.kook.example/reply.md',
+    title: 'reply.md',
+  })
   uploaded = ''
   adapter.native.api.updateMessage = async (data) => {
     expect(data.msg_id).toBe('long-message')
@@ -166,7 +172,8 @@ test('long KOOK replies use a full markdown attachment and preserve native menti
   }
   expect((await adapter.edit!('long-message', { ...message, partial: true })).status).toBe('sent')
   expect(uploaded).toBe('')
-  expect(posted.length).toBe(7500)
+  expect(posted.length).toBeLessThan(8000)
+  expect(JSON.parse(posted)[0].modules.every((module: { type: string }) => module.type === 'section')).toBe(true)
   expect((await adapter.edit!('long-message', { ...message, partial: false })).status).toBe('sent')
   expect(uploaded).toBe(content)
   expect(kookMentions(posted)).toEqual(['456'])
