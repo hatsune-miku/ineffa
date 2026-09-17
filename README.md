@@ -61,6 +61,8 @@ docker compose up -d
 
 日常配置在 WebUI 完成。高级配置参考 [ineffa.config.example.ts](ineffa.config.example.ts)，环境变量参考 [.env.example](.env.example)。Skills、MCP 和工具权限沿用 OpenCode 配置。
 
+「连接与运行 → 配置迁移」可导出明文 JSON，包含保存的模型配置、凭据和平台账号；导入时逐项选择合并方式及账号工作目录，重启服务后生效。环境变量、代码配置、Skills 文件和会话历史需另行迁移。
+
 本地数据保存在 `.ineffa/`，工作文件保存在 `workspace/`；备份前先停止服务，再一起复制这两个目录。
 
 ```sh

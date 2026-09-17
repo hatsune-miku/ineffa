@@ -4,6 +4,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import { relative, resolve, sep } from 'node:path'
 
 import { AccountsConfig, validateAccount } from './config'
+import { ConfigTransfer } from './config-transfer'
 import { ProviderSettings } from './providers'
 import { messageView } from './view'
 
@@ -46,6 +47,8 @@ export function createServer(host: Host, options: ServerOptions) {
   const clients = new Set<() => void>()
   const dist = resolve(options.dist ?? 'dist')
   const providers = new ProviderSettings(host.engine, assertModelsUnused)
+  const transfer = new ConfigTransfer(host, options.accounts, options.directory)
+  let configurationWrites = Promise.resolve()
   async function assertModelsUnused(providerId: string, models?: string[]) {
     function matches(value?: string) {
       const model = modelReference(value)
@@ -95,6 +98,7 @@ export function createServer(host: Host, options: ServerOptions) {
     async fetch(request) {
       const url = new URL(request.url)
       const path = url.pathname
+      let releaseConfiguration: (() => void) | undefined
       try {
         const publicOrigin = options.publicOrigin ? new URL(options.publicOrigin).origin : undefined
         const localNames = ['localhost', '127.0.0.1', '[::1]', hostname]
@@ -121,6 +125,44 @@ export function createServer(host: Host, options: ServerOptions) {
         if (path === '/api/auth') return Response.json({ authenticated: authenticate(request) })
         if (path.startsWith('/api/') && !authenticate(request))
           throw new IneffaError('unauthorized', '需要访问令牌。', 401)
+        if (request.method === 'POST' && /^\/api\/(config|providers|integrations|adapters)(\/|$)/.test(path)) {
+          const previous = configurationWrites
+          configurationWrites = new Promise<void>((resolve) => {
+            releaseConfiguration = resolve
+          })
+          await previous
+        }
+        if (path.startsWith('/api/config/') && request.method === 'POST') {
+          if (path === '/api/config/cancel') {
+            await transfer.cancel()
+            return Response.json({ ok: true })
+          }
+          if (path === '/api/config/export') {
+            return Response.json(await transfer.export(), {
+              headers: {
+                'Cache-Control': 'no-store',
+                'Content-Disposition': 'attachment; filename="ineffa-config.json"',
+              },
+            })
+          }
+          const data = await body(request)
+          if (path === '/api/config/preview') {
+            return Response.json(await transfer.preview(data.archive), { headers: { 'Cache-Control': 'no-store' } })
+          }
+          if (path === '/api/config/import') {
+            return Response.json(await transfer.stage(data.archive, data.revision, data.choices), {
+              headers: { 'Cache-Control': 'no-store' },
+            })
+          }
+        }
+        if (path === '/api/config/status') return Response.json({ pending: await transfer.pending() })
+        if (
+          request.method === 'POST' &&
+          /^\/api\/(providers|integrations|adapters)(\/|$)/.test(path) &&
+          (await transfer.pending())
+        ) {
+          throw new IneffaError('import_pending', '配置导入已保存，请重启服务后再编辑配置。', 409)
+        }
         if (path === '/api/health')
           return Response.json({
             status: 'ready',
@@ -582,6 +624,8 @@ export function createServer(host: Host, options: ServerOptions) {
           { error: { code, message: errorMessage(error) } },
           { status, headers: { 'Cache-Control': 'no-store' } }
         )
+      } finally {
+        releaseConfiguration?.()
       }
     },
   })

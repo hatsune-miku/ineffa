@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Alert, Badge, Button, ComboBox, Tab, TabList, TabPanel, Tabs } from '@a1knla/cakeui'
 
 import { AccountDialog } from './components/AccountDialog'
+import { ConfigTransfer } from './components/ConfigTransfer'
 import { ConfiguredProvider } from './components/ConfiguredProvider'
 import { CustomProviderDialog, agentPlan } from './components/CustomProviderDialog'
 import { DeleteProvider, type DeleteProviderTarget } from './components/DeleteProvider'
@@ -278,6 +279,7 @@ export function Settings({
                     <Loading />
                   )}
                 </section>
+                <ConfigTransfer />
                 <section className="settings-section runtime-section">
                   <div>
                     <h2 className="section-heading">本地运行</h2>

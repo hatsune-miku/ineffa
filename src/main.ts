@@ -3,6 +3,7 @@ import { kook } from 'ineffa-kook'
 import { resolve } from 'node:path'
 
 import { AccountsConfig, prepareDirectories, readConfig } from './config'
+import { applyPendingImport } from './config-transfer'
 import { acquireOwnership } from './ownership'
 import { createServer } from './server'
 import { webAdapter } from './web-adapter'
@@ -11,6 +12,11 @@ const config = await readConfig()
 const { dataDirectory, directory } = await prepareDirectories(config)
 const releaseOwnership = acquireOwnership(dataDirectory)
 const accounts = new AccountsConfig(resolve(dataDirectory, 'accounts.json'))
+await applyPendingImport(
+  accounts.path,
+  resolve(config.opencode?.config?.directory ?? resolve(dataDirectory, 'opencode/config')),
+  resolve(dataDirectory, 'opencode/opencode.sqlite')
+)
 const savedAccounts = await accounts.load()
 const store = new Store(resolve(dataDirectory, 'ineffa.sqlite'))
 const engine = await OpenCodeBridge.open(resolve(dataDirectory, 'opencode'), config.opencode)

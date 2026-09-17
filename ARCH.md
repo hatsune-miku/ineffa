@@ -259,6 +259,10 @@ OpenCode 已有执行恢复机制，但文档明确不保证外部工具副作�
 
 ### 8.1 配置只表达已有概念
 
+WebUI 配置迁移使用版本化明文 JSON，包含 `accounts.json`、服务级 OpenCode JSON/JSONC 配置和提供方凭据。预览按账号、提供方、设置及凭据组列出冲突；保留本地独有账号与模型，账号工作目录显式映射到目标环境。确认时复核当前配置摘要，防止覆盖预览后发生的编辑。
+
+导入写入一个待生效文件，可在重启前撤销。持有进程锁后、启动 SDK 与 Adapter 前应用；写入失败保留文件并阻止启动，下次启动可重放。凭据只在此离线阶段写入 OpenCode 2.0.3 的凭据表，不复制会话数据库。API 不提供明文凭据读取接口，因此导出使用独立只读连接；该兼容点由迁移测试覆盖。环境变量、可执行的 TypeScript 配置及外部 Skills 文件不在 JSON 迁移范围内。
+
 Ineffa 配置负责 Adapter 实例及其 OpenCode Agent/工作目录引用，并提供账号级 `agentPrompt.identity`（Agent 身份）和 `agentPrompt.task`（该做什么）。模型、工具、Skills、MCP 和执行权限继续复用 OpenCode 配置。
 
 这两项是普通文本模板：`{displayName}` 使用账号配置的显示名称，`{platformId}` 使用 Adapter 已确认的真实平台账号 ID；只做一次字面替换，不执行表达式或递归展开。两项均为空时保留 OpenCode Agent 的默认基础提示词。填写后只替换基础提示词，保留上游环境、项目指令、工具和权限机制。

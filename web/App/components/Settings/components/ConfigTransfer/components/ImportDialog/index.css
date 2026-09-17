@@ -1,0 +1,50 @@
+.config-import-dialog {
+  width: min(680px, calc(100vw - 32px));
+
+  .config-import-content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .config-import-list {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .config-import-row {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--cake-line);
+  }
+
+  .config-import-heading,
+  .config-import-summary-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .config-import-label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-wrap: anywhere;
+  }
+
+  .config-import-note,
+  .config-import-detail,
+  .config-import-path {
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .config-import-path {
+    flex-basis: 100%;
+  }
+}

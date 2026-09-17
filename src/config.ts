@@ -21,7 +21,10 @@ export async function readConfig(): Promise<AppConfig> {
 export class AccountsConfig {
   private accounts: KookOptions[] = []
   private saving: Promise<unknown> = Promise.resolve()
-  constructor(private path: string) {}
+  constructor(readonly path: string) {}
+  list() {
+    return structuredClone(this.accounts)
+  }
   async load() {
     try {
       const data = JSON.parse(await readFile(this.path, 'utf8'))

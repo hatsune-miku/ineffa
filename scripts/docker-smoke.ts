@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 
+import type { ConfigArchive, MergePreview } from '../src/config-transfer'
+
 const directory = process.argv[2] ? resolve(process.argv[2]) : undefined
 if (!directory) throw new Error('用法：bun run scripts/docker-smoke.ts release/部署包目录')
 const values = Object.fromEntries(
@@ -48,10 +50,27 @@ try {
   const session = await api('/api/sessions', { title: 'Docker persistence check' })
   await compose(['exec', '-T', 'ineffa', 'bun', '-e', "await Bun.write('/app/workspace/smoke.txt', 'persisted')"])
   console.log('Container startup, authentication, loopback port and session creation passed.')
+  await api('/api/integrations/key', { id: 'openai', key: 'local-smoke-key' })
+  const archive = (await api('/api/config/export', {})) as ConfigArchive
+  assert.equal(archive.credentials.openai?.[0]?.value.key, 'local-smoke-key')
+  archive.opencode.default_agent = 'build'
+  archive.credentials.openai![0]!.value.key = 'imported-smoke-key'
+  const preview = (await api('/api/config/preview', { archive })) as MergePreview
+  await api('/api/config/import', {
+    archive,
+    revision: preview.revision,
+    choices: preview.items.map((item) => ({ key: item.key, action: 'import', directory: item.directory })),
+  })
+  assert.equal((await api('/api/config/status')).pending, true)
   await compose(['up', '-d', '--force-recreate', '--wait', '--wait-timeout', '120'])
   assert.equal((await api(`/api/sessions/${session.id}`)).binding.sessionId, session.sessionId)
   assert.equal(await compose(['exec', '-T', 'ineffa', 'cat', '/app/workspace/smoke.txt']), 'persisted')
   console.log('Session and workspace survived container recreation.')
+  const imported = (await api('/api/config/export', {})) as ConfigArchive
+  assert.equal(imported.opencode.default_agent, 'build')
+  assert.equal(imported.credentials.openai?.[0]?.value.key, 'imported-smoke-key')
+  assert.equal((await api('/api/config/status')).pending, false)
+  console.log('Plaintext configuration and credentials imported successfully across container recreation.')
 } finally {
   // This unique Compose project owns only the disposable smoke-test volumes.
   await compose(['down', '--volumes', '--remove-orphans'])

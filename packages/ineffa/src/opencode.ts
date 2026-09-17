@@ -23,7 +23,8 @@ export class OpenCodeBridge {
   private constructor(
     readonly native: OpenCode.Interface,
     readonly debug: DebugTimings,
-    readonly configDirectory: string
+    readonly configDirectory: string,
+    readonly databasePath: string
   ) {}
   async configureAccountPrompts(resolvePrompt: (sessionId: string) => AccountPrompt | undefined) {
     await this.native.plugin(
@@ -58,7 +59,8 @@ export class OpenCodeBridge {
         config: { directory: configDirectory, ...options.config },
       }),
       debug,
-      configDirectory
+      configDirectory,
+      resolve(dataDirectory, 'opencode.sqlite')
     )
   }
   async ensure(binding: Binding, model?: string) {

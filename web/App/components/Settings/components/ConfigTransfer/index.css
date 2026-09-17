@@ -1,0 +1,15 @@
+.config-transfer {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+
+  .config-transfer-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .config-transfer-note {
+    font-size: 12px;
+  }
+}
