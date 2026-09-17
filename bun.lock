@@ -39,15 +39,12 @@
       "name": "ineffa-kook",
       "version": "0.1.0",
       "dependencies": {
-        "@kookapp/js-sdk": "0.1.3",
+        "@kookapp/js-sdk": "0.1.4",
       },
       "peerDependencies": {
         "ineffa": "^0.1.0",
       },
     },
-  },
-  "patchedDependencies": {
-    "@kookapp/js-sdk@0.1.3": "patches/@kookapp%2Fjs-sdk@0.1.3.patch",
   },
   "packages": {
     "@a1knla/cakeui": ["@a1knla/cakeui@0.2.0", "https://registry.npmmirror.com/@a1knla/cakeui/-/cakeui-0.2.0.tgz", { "peerDependencies": { "react": ">=19.0.0", "react-dom": ">=19.0.0" } }, "sha512-vr5z4I7L3Sgx0GfYQbOm/Pv6RgAb7dZA3VihG27jczFrQs3kaRD4B1eDvYMUfoUwLixwnUWjrno6shxBsEUNKA=="],
@@ -292,7 +289,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "https://registry.npmmirror.com/@jridgewell/trace-mapping/-/trace-mapping-0.3.31.tgz", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@kookapp/js-sdk": ["@kookapp/js-sdk@0.1.3", "https://registry.npmmirror.com/@kookapp/js-sdk/-/js-sdk-0.1.3.tgz", { "dependencies": { "pako": "^2.1.0", "ws": "^8.21.0" } }, "sha512-GevfRHKW85UxJtMYuvsywTmDE5dBA5nNTP3mrU6AmnmEPDWpSyOWXPqrkploy62oVECdicz5tGSduxPcf4N95Q=="],
+    "@kookapp/js-sdk": ["@kookapp/js-sdk@0.1.4", "", { "dependencies": { "pako": "^2.1.0", "ws": "^8.21.0" } }, "sha512-qS8Vqb+quko0En5rCXT8WPrv+tOiWD1A8L8cUQN10h/xdabvivHMdQdM8lpFtC9fRa2m5YAdMtGzYSoD64535Q=="],
 
     "@lydell/node-pty": ["@lydell/node-pty@1.2.0-beta.12", "https://registry.npmmirror.com/@lydell/node-pty/-/node-pty-1.2.0-beta.12.tgz", { "optionalDependencies": { "@lydell/node-pty-darwin-arm64": "1.2.0-beta.12", "@lydell/node-pty-darwin-x64": "1.2.0-beta.12", "@lydell/node-pty-linux-arm64": "1.2.0-beta.12", "@lydell/node-pty-linux-x64": "1.2.0-beta.12", "@lydell/node-pty-win32-arm64": "1.2.0-beta.12", "@lydell/node-pty-win32-x64": "1.2.0-beta.12" } }, "sha512-qIK890UwPupoj07osVvgOIa++1mxeHbcGry4PKRHhNVNs81V2SCG34eJr46GybiOmBtc8Sj5PB1/GGM5PL549g=="],
 

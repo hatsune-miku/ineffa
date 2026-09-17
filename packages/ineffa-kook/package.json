@@ -6,7 +6,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@kookapp/js-sdk": "0.1.3"
+    "@kookapp/js-sdk": "0.1.4"
   },
   "peerDependencies": {
     "ineffa": "^0.1.0"

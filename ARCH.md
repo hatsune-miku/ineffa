@@ -221,11 +221,11 @@ Host 仅在平台相同、双方允许访问当前地址、`conversationKey(addr
 
 ### 6.1 官方 `ineffa-kook`
 
-基于指定的 [kaiheila/js-bot](https://github.com/kaiheila/js-bot)，其 README 使用包名 `@kookapp/js-sdk`。
+基于指定的 [kaiheila/js-bot](https://github.com/kaiheila/js-bot)，直接使用 `@kookapp/js-sdk@0.1.4`。SDK 的协议与连接缺陷在上游修复，不在 Adapter 中维护补丁或另一套状态机。
 
 - 每套账号创建一个 `KookClient`，复用其连接、心跳、重连和 REST 限流。
 - 映射频道/私聊、作者 ID、消息 ID、引用和真实 mention；保留 KMarkdown、卡片、附件及原生客户端能力。
-- 正文流式更新 KMarkdown，工具与 Thinking 分别更新独立消息；500 ms 合并窗口与消息间最小更新间隔仅作用于平台投递，不阻塞模型。输出 Token 累计本次 execution 各 step 的 output + reasoning，不包含输入和缓存；没有用量时显示 `—`。超长草稿截取前 7,500 字符，最终回复上传完整 Markdown 附件并保留原生 mention。
+- 正文以卡片中的 KMarkdown 流式更新，工具与 Thinking 分别更新独立消息；500 ms 合并窗口与消息间最小更新间隔仅作用于平台投递，不阻塞模型。输出 Token 累计本次 execution 各 step 的 output + reasoning，不包含输入和缓存；没有用量时显示 `—`。超长正文最终上传完整 Markdown 文件，并通过卡片文件模块发送。
 - 草稿与最终回复复用同一条 outbound、平台消息 ID；revision 区分已发送内容与最新内容。只有最终正文的最新版本确认送达后才转交 mention，状态消息不参与转交。创建结果未知不盲目重发，旧回声不能确认新版本编辑。
 - 展示计数从 OpenCode 持久日志重建，历史事件只恢复计数，不重发完成的消息；正文增量只在内存合并，最终正文在推进日志游标前持久化。
 - SDK 的 REST 方法以 `success: false` 表示多种失败，不能只捕获异常就认定发送成功。

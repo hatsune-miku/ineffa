@@ -6,9 +6,9 @@
 
 Ineffa 为每个账号创建一个客户端，只调用 `connect()` / `disconnect()`，监听器只注册一次，没有自己发送心跳或推进 SDK 状态机。当前证据指向 SDK 的协议校验缺陷，不能据此断言线上每一次超时都来自同一原因。
 
-修复以 `patches/@kookapp%2Fjs-sdk@0.1.3.patch` 随仓库保存，Bun 安装依赖时自动应用；只允许 PONG 缺省 `d`，保留其他信令校验。Adapter 的“已连接”状态也改为等待协议握手完成，而不是仅凭 WebSocket 打开。
+修复已进入上游 `@kookapp/js-sdk@0.1.4`，Ineffa 直接依赖该版本，已移除本地补丁。SDK 同时修复旧 WebSocket URL 的 resume、恢复失败后的持续退避、握手错误处理、登录取消竞态和压缩帧兼容。Adapter 的“已连接”状态等待协议握手完成，而不是仅凭 WebSocket 打开。
 
-本地模拟网关覆盖了压缩与非压缩 PONG、连续心跳和服务端 RECONNECT。尚未验证真实弱网、长时间断网恢复和 KOOK 服务端的全部行为。SDK 的完整 resume 状态机仍是上游责任：例如当前实现先在原 socket 发 resume，回退时通过 gateway API 传递恢复参数，与文档描述的重新连接旧 URL 不完全一致；这次没有重写该状态机，也没有宣称整个 SDK 已通过稳定性认证。
+SDK 的测试覆盖了消息重放、恢复退避和取消竞态；Ineffa 的本地模拟网关覆盖压缩与非压缩 PONG、连续心跳和服务端 RECONNECT。尚未验证真实弱网、多天运行和 KOOK 服务端的全部行为。连接状态机始终由 SDK 管理，后续 SDK 缺陷也应直接在上游修复。恢复旧会话失败后，SDK 会清空序列并获取新 gateway；会话已经过期时无法保证补回全部离线消息。
 
 参考：[WebSocket 协议](https://developer.kookapp.cn/doc/websocket)。
 
