@@ -7,7 +7,9 @@
       "dependencies": {
         "@a1knla/cakeui": "0.2.0",
         "@fontsource-variable/noto-sans-sc": "5.3.0",
+        "@opencode/schema": "2.0.3",
         "@opencode/sdk": "2.0.3",
+        "effect": "4.0.0-rc.112",
         "ineffa": "workspace:*",
         "ineffa-kook": "workspace:*",
         "jsonc-parser": "3.3.1",

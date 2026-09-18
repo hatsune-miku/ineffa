@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { AccountsConfig, validateAccount } from './config'
 import { ConfigTransfer } from './config-transfer'
+import { OpenCodeSettings } from './opencode-settings'
 import { ProviderSettings } from './providers'
 import { messageView } from './view'
 
@@ -48,6 +49,7 @@ export function createServer(host: Host, options: ServerOptions) {
   const clients = new Set<() => void>()
   const dist = resolve(options.dist ?? 'dist')
   const providers = new ProviderSettings(host.engine, assertModelsUnused)
+  const engineSettings = new OpenCodeSettings(host, options.directory)
   const transfer = new ConfigTransfer(host, options.accounts, options.directory)
   let configurationWrites = Promise.resolve()
   async function assertModelsUnused(providerId: string, models?: string[]) {
@@ -126,7 +128,7 @@ export function createServer(host: Host, options: ServerOptions) {
         if (path === '/api/auth') return Response.json({ authenticated: authenticate(request) })
         if (path.startsWith('/api/') && !authenticate(request))
           throw new IneffaError('unauthorized', '需要访问令牌。', 401)
-        if (request.method === 'POST' && /^\/api\/(config|providers|integrations|adapters)(\/|$)/.test(path)) {
+        if (request.method === 'POST' && /^\/api\/(config|providers|integrations|adapters|opencode)(\/|$)/.test(path)) {
           const previous = configurationWrites
           configurationWrites = new Promise<void>((resolve) => {
             releaseConfiguration = resolve
@@ -159,10 +161,36 @@ export function createServer(host: Host, options: ServerOptions) {
         if (path === '/api/config/status') return Response.json({ pending: await transfer.pending() })
         if (
           request.method === 'POST' &&
-          /^\/api\/(providers|integrations|adapters)(\/|$)/.test(path) &&
+          /^\/api\/(providers|integrations|adapters|opencode)(\/|$)/.test(path) &&
           (await transfer.pending())
         ) {
           throw new IneffaError('import_pending', '配置导入已保存，请重启服务后再编辑配置。', 409)
+        }
+        if (path === '/api/opencode' && request.method === 'GET') {
+          const directory = resolve(url.searchParams.get('directory') || options.directory)
+          if (!engineSettings.directories().includes(directory))
+            throw new IneffaError('unknown_directory', '请选择已配置账号的工作目录。')
+          return Response.json(await engineSettings.view(directory), { headers: { 'Cache-Control': 'no-store' } })
+        }
+        if (path.startsWith('/api/opencode/') && request.method === 'POST') {
+          const data = await body(request)
+          let result: unknown
+          if (path === '/api/opencode/mcp/save') result = await engineSettings.saveMcp(data)
+          else if (path === '/api/opencode/mcp/delete') result = await engineSettings.removeMcp(data)
+          else if (path === '/api/opencode/agents/save') result = await engineSettings.saveAgent(data)
+          else if (path === '/api/opencode/agents/delete') result = await engineSettings.removeAgent(data)
+          else if (path === '/api/opencode/runtime') result = await engineSettings.saveRuntime(data)
+          else if (path === '/api/opencode/mcp/connect' || path === '/api/opencode/mcp/disconnect') {
+            const directory = resolve(text(data.directory, '工作目录'))
+            if (!engineSettings.directories().includes(directory))
+              throw new IneffaError('unknown_directory', '请选择已配置账号的工作目录。')
+            const input = { server: text(data.id, 'MCP ID', 100), location: { directory } }
+            if (path.endsWith('/disconnect')) await host.engine.native.mcp.disconnect(input)
+            else await host.engine.native.mcp.connect(input)
+            result = { ok: true }
+          } else throw new IneffaError('not_found', '此操作不存在。', 404)
+          host.emit({ type: 'change' })
+          return Response.json(result, { headers: { 'Cache-Control': 'no-store' } })
         }
         const attachmentMatch = /^\/api\/attachments\/(out_[a-f0-9]+)\/(\d+)$/.exec(path)
         if (attachmentMatch && request.method === 'GET') {
@@ -284,6 +312,14 @@ export function createServer(host: Host, options: ServerOptions) {
           const binding = host.store.binding(match[1]!)
           const action = match[2] ?? ''
           const sessionID = binding.sessionId
+          if (action === 'export' && request.method === 'GET') {
+            return Response.json(await host.engine.native.sessions.export({ sessionID }), {
+              headers: {
+                'Cache-Control': 'no-store',
+                'Content-Disposition': `attachment; filename="${binding.id}.json"`,
+              },
+            })
+          }
           if (action === '' && request.method === 'GET') {
             const [info, page, pending, permissions, forms, active] = await Promise.all([
               host.engine.native.sessions.get({ sessionID }),
@@ -335,6 +371,7 @@ export function createServer(host: Host, options: ServerOptions) {
                 tokens: info.tokens,
                 cost: info.cost,
                 outcome: info.outcome,
+                permissions: info.permissions ?? [],
               },
               messages: rows,
               cursor: page.data.length >= 100 ? page.cursor.next : null,
@@ -387,6 +424,51 @@ export function createServer(host: Host, options: ServerOptions) {
               return Response.json({ ok: true })
             }
             if (action === 'reset') return Response.json(await host.reset(binding.id))
+            if (action === 'compact') {
+              if ((await host.engine.native.sessions.active())[sessionID])
+                throw new IneffaError('session_busy', '请等待当前输出完成后压缩上下文。', 409)
+              const result = await host.engine.native.sessions.compact({ sessionID })
+              host.emit({ type: 'change', bindingId: binding.id })
+              return Response.json(result, { status: 202 })
+            }
+            if (action === 'debug') {
+              if (typeof data.enabled !== 'boolean') throw new IneffaError('invalid_debug', '调试开关必须是布尔值。')
+              host.store.setDebug(binding.id, data.enabled)
+              host.emit({ type: 'change', bindingId: binding.id })
+              return Response.json({ ok: true })
+            }
+            if (action === 'rules') {
+              const rules = data.permissions
+              if (
+                !Array.isArray(rules) ||
+                rules.length > 100 ||
+                rules.some(
+                  (rule) =>
+                    !rule ||
+                    typeof rule.action !== 'string' ||
+                    !rule.action.trim() ||
+                    typeof rule.resource !== 'string' ||
+                    !rule.resource.trim() ||
+                    !['allow', 'deny', 'ask'].includes(rule.effect)
+                )
+              )
+                throw new IneffaError('invalid_rules', '权限规则需要操作、资源和允许／询问／拒绝结果。')
+              await host.engine.native.permission.rules({ sessionID, permissions: rules })
+              host.emit({ type: 'change', bindingId: binding.id })
+              return Response.json({ ok: true })
+            }
+            if (action === 'agent') {
+              const agent = text(data.agent, 'Agent', 100)
+              const agents = await host.engine.native.agent.list({ location: { directory: binding.directory } })
+              if (!agents.data.some((item) => item.id === agent && !item.hidden && item.mode !== 'subagent'))
+                throw new IneffaError('invalid_agent', '所选 Agent 当前不可用。')
+              if ((await host.engine.native.sessions.active())[sessionID])
+                throw new IneffaError('session_busy', '请等待当前输出完成后切换 Agent。', 409)
+              await host.engine.native.sessions.switchAgent({ sessionID, agent })
+              host.store.setAgent(binding.id, agent)
+              host.emit({ type: 'change', bindingId: binding.id })
+              return Response.json({ ok: true })
+            }
             if (action === 'rename') {
               const title = text(data.title, '会话名称', 120)
               await host.engine.native.sessions.rename({ sessionID, title })

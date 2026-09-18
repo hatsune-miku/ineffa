@@ -380,8 +380,10 @@ export function App() {
               detail={detail}
               close={() => setManage(false)}
               changed={async (id) => {
-                setManage(false)
-                if (id !== undefined) choose(id)
+                if (id !== undefined) {
+                  setManage(false)
+                  choose(id)
+                }
                 await refresh()
               }}
             />

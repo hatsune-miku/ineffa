@@ -21,3 +21,18 @@
     color: var(--cake-muted);
   }
 }
+.permission-editor {
+  .stack {
+    margin-top: 16px;
+  }
+  .permission-rule {
+    display: grid;
+    grid-template-columns: 1fr 1fr 90px auto;
+    gap: 8px;
+  }
+  @media (max-width: 620px) {
+    .permission-rule {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+}

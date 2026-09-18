@@ -8,6 +8,7 @@ import { ConfiguredProvider } from './components/ConfiguredProvider'
 import { CustomProviderDialog, agentPlan } from './components/CustomProviderDialog'
 import { DeleteProvider, type DeleteProviderTarget } from './components/DeleteProvider'
 import { Empty } from './components/Empty'
+import { type EngineSection, EngineSettings } from './components/EngineSettings'
 import { ProviderDialog } from './components/ProviderDialog'
 import { ResolveDialog } from './components/ResolveDialog'
 
@@ -77,7 +78,7 @@ export function Settings({
         .catch((e) => {
           if (!controller.signal.aborted) setError(messageOf(e))
         })
-    else
+    else if (tab === 'deliveries')
       api<Deliveries>('/deliveries', undefined, controller.signal)
         .then((data) => {
           setDeliveries(data)
@@ -117,12 +118,21 @@ export function Settings({
     <div className="settings-scroll">
       <div className="settings-content">
         <Tabs value={tab} onValueChange={setTab}>
-          <TabList aria-label="设置分类">
+          <TabList className="settings-tab-list" aria-label="设置分类">
             <Tab value="connections">连接</Tab>
+            <Tab value="mcp">MCP</Tab>
+            <Tab value="skills">Skills</Tab>
+            <Tab value="agents">Agent</Tab>
+            <Tab value="runtime">运行</Tab>
             <Tab value="deliveries">投递记录</Tab>
           </TabList>
           {error && <Alert tone="danger">{error}</Alert>}
           {notice && <Alert>{notice}</Alert>}
+          {(['mcp', 'skills', 'agents', 'runtime'] as EngineSection[]).map((section) => (
+            <TabPanel key={section} value={section}>
+              {tab === section && <EngineSettings section={section} catalog={catalog} reloadCatalog={reloadCatalog} />}
+            </TabPanel>
+          ))}
           <TabPanel value="connections">
             {tab === 'connections' && (
               <>

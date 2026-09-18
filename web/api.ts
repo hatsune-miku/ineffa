@@ -23,6 +23,7 @@ export type ConversationDetail = {
     tokens: { input: number; output: number; reasoning: number; cache: { read: number; write: number } }
     cost: number
     outcome?: string
+    permissions: { action: string; resource: string; effect: 'allow' | 'deny' | 'ask' }[]
   }
   pending: { id: string; delivery: string; type: string; text: string }[]
   permissions: Permission[]

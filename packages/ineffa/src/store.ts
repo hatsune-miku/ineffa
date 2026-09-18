@@ -200,6 +200,9 @@ export class Store {
   setDebug(id: string, enabled: boolean) {
     this.db.query('UPDATE bindings SET debug=? WHERE id=?').run(enabled ? 1 : 0, id)
   }
+  setAgent(id: string, agent: string) {
+    this.db.query('UPDATE bindings SET agent=?,updatedAt=? WHERE id=?').run(agent, Date.now(), id)
+  }
   saveDebugReport(bindingId: string, messageId: string, report: string) {
     this.db
       .query('INSERT OR IGNORE INTO debug_reports(messageId,bindingId,report) VALUES(?,?,?)')

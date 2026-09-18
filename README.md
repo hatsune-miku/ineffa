@@ -13,7 +13,7 @@ bun run build
 bun start
 ```
 
-打开 [http://127.0.0.1:4097](http://127.0.0.1:4097)，在「连接与运行」中配置模型和平台账号。
+打开 [http://127.0.0.1:4097](http://127.0.0.1:4097)，在「连接与运行」中配置模型、平台账号、MCP 和 Agent，查看 Skills 与运行设置。[WebUI 功能](docs/webui.md)
 
 - 支持自定义 OpenAI 兼容服务、Volcengine Agent Plan，以及为每个账号绑定模型。
 - KOOK 账号可按服务器、频道和私聊用户设置访问范围。群聊未 @ 的消息作为背景，@ 后触发回复。
@@ -31,7 +31,7 @@ bun start
 
 ## 配置与开发
 
-日常配置在 WebUI 完成。高级配置参考 [ineffa.config.example.ts](ineffa.config.example.ts)，环境变量参考 [.env.example](.env.example)。Skills、MCP 和工具权限沿用 OpenCode 配置。
+日常配置在 WebUI 完成。高级配置参考 [ineffa.config.example.ts](ineffa.config.example.ts)，环境变量参考 [.env.example](.env.example)。MCP、Agent 与运行设置保存到 OpenCode 原生配置；会话设置可调整工具权限，默认静默允许。
 
 「连接与运行 → 配置迁移」可导出明文 JSON，包含保存的模型配置、凭据和平台账号；导入时逐项选择合并方式及账号工作目录，重启服务后生效。环境变量、代码配置、Skills 文件和会话历史需另行迁移。
 
