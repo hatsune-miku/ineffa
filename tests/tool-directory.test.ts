@@ -173,9 +173,12 @@ test('all browser schemas are discoverable; skills load only on demand and respe
       return { tool: 'list_browser_tools', input: {} }
     }
     if (step === 4) {
-      const tools = JSON.parse(toolResult(request)).tools as { name: string }[]
+      const tools = JSON.parse(toolResult(request)).tools as { name: string; input: { type?: string } }[]
       expect(tools).toHaveLength(44)
       expect(tools.every((tool) => names(request).includes(tool.name))).toBe(true)
+      expect(tools.every((tool) => tool.input.type === 'object')).toBe(true)
+      const sent = request.tools as { function: { parameters: { type?: string } } }[]
+      expect(sent.every((tool) => tool.function.parameters.type === 'object')).toBe(true)
       return { tool: 'list_tools', input: {} }
     }
     if (step === 5) {

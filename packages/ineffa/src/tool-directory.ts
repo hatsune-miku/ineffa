@@ -102,6 +102,23 @@ function listedGroups(messages: SessionContext['messages']): Set<Group> {
   return groups
 }
 
+function normalizeToolInput(tool: Tool) {
+  const input = tool.input
+  // OpenCode emits this union for an empty Effect struct. Direct function tools
+  // need an object root; {} is also accepted by the original native validator.
+  if (
+    input.type === undefined &&
+    Array.isArray(input.anyOf) &&
+    input.anyOf.length === 2 &&
+    input.anyOf.every((branch) => Object.keys(branch).length === 1) &&
+    input.anyOf.some((branch) => branch.type === 'object') &&
+    input.anyOf.some((branch) => branch.type === 'array')
+  ) {
+    const { anyOf: _anyOf, ...annotations } = input
+    tool.input = { ...annotations, type: 'object', properties: {}, additionalProperties: false }
+  }
+}
+
 export function toolDirectory(resolvePrompt: (sessionId: string) => AccountPrompt | undefined) {
   return Plugin.define({
     id: 'ineffa.tool-directory',
@@ -150,6 +167,7 @@ export function toolDirectory(resolvePrompt: (sessionId: string) => AccountPromp
       async function prepare(event: SessionContext) {
         // Every underlying tool is now direct; the empty Code Mode wrapper is unnecessary.
         delete event.tools.execute
+        for (const tool of Object.values(event.tools)) normalizeToolInput(tool)
         const prompt = resolvePrompt(event.sessionID)
         const [skillList, agent, session] = await Promise.all([
           context.skill.list(),
