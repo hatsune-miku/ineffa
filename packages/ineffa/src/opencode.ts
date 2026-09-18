@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { Plugin } from '@opencode/plugin'
 import type { OpenCode, OpenCodeEvent } from '@opencode/sdk'
 
+import { browserRuntime } from './browser'
 import { DebugTimings } from './debug'
 import { modelReference } from './model'
 import { createEmbedded } from './opencode-runtime'
@@ -14,7 +15,7 @@ import { instructionOverrides, toolDirectory } from './tool-directory'
 import type { Attachment, Binding, Inbound } from './types'
 
 export type EngineMessage = Awaited<ReturnType<OpenCode.Interface['sessions']['message']>>
-export type OpenCodeOptions = Omit<OpenCode.CreateOptions, 'database'>
+export type OpenCodeOptions = Omit<OpenCode.CreateOptions, 'database'> & { browser?: boolean }
 
 export function sourceInputId(message: EngineMessage): string {
   const source = message.metadata?.ineffa
@@ -130,6 +131,7 @@ export class OpenCodeBridge {
     await this.native.plugin(toolDirectory(resolvePrompt))
   }
   static async open(dataDirectory: string, options: OpenCodeOptions = {}) {
+    const { browser: browserEnabled = true, ...nativeOptions } = options
     await mkdir(dataDirectory, { recursive: true })
     const configDirectory = resolve(options.config?.directory ?? resolve(dataDirectory, 'config'))
     await mkdir(configDirectory, { recursive: true })
@@ -137,15 +139,14 @@ export class OpenCodeBridge {
     return new OpenCodeBridge(
       await createEmbedded(
         {
-          ...options,
-          plugins: [silentPermissions, ...(options.plugins ?? [])],
-          instances: debug.instances(options.instances),
+          ...nativeOptions,
+          plugins: [silentPermissions, debug.plugin, ...(options.plugins ?? [])],
           app: { name: 'ineffa', version: '0.1.0', ...options.app },
           database: { path: resolve(dataDirectory, 'opencode.sqlite') },
           events: { persist: true },
           config: { directory: configDirectory, ...options.config },
         },
-        { overrides: instructionOverrides }
+        { overrides: [...instructionOverrides, ...(browserEnabled ? [browserRuntime] : [])] }
       ),
       debug,
       configDirectory,

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { TestAdapter, fixture, human, until } from './fixture'
 
-import { DebugTimings, debugDuration } from '../packages/ineffa/src/debug'
+import { debugDuration } from '../packages/ineffa/src/debug'
 import { AccountsConfig } from '../src/config'
 import { createServer } from '../src/server'
 
@@ -137,29 +137,6 @@ test('debug durations use hours, minutes and seconds without wrapping at 24 hour
   expect(debugDuration(60_000)).toBe('1m 0s')
   expect(debugDuration(3_600_000)).toBe('1h 0m 0s')
   expect(debugDuration((26 * 3600 + 11 * 60 + 1) * 1000)).toBe('26h 11m 1s')
-})
-
-test('HTTP timing hooks are isolated to debug instances and preserve supplied instance plugins', async () => {
-  const timings = new DebugTimings()
-  timings.enabled = (id) => id === 'debug-session'
-  const calls: string[] = []
-  const original = { id: 'existing-plugin', setup: () => {} }
-  const options = timings.instances({
-    key: () => 'original-key',
-    configure: (key) => {
-      calls.push(key)
-      return { plugins: [original] }
-    },
-  })
-  const normalKey = options.key({ id: 'normal-session' } as never)
-  const debugKey = options.key({ id: 'debug-session' } as never)
-  expect(normalKey).not.toBe(debugKey)
-  expect((await options.configure(normalKey)).plugins.map((item) => item.id)).toEqual(['existing-plugin'])
-  expect((await options.configure(debugKey)).plugins.map((item) => item.id)).toEqual([
-    'existing-plugin',
-    'ineffa.debug-timings',
-  ])
-  expect(calls).toEqual(['original-key', 'original-key'])
 })
 
 test('debug stays scoped to one account, persists through restart and /new, and retains completed reports', async () => {

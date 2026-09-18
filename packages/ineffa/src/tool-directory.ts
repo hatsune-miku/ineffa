@@ -7,6 +7,7 @@ import { Tool as NativeTool } from '@opencode/core/tool'
 import { Plugin } from '@opencode/plugin'
 import type { SessionContext } from '@opencode/plugin/promise/session'
 
+import { browserServer } from './browser'
 import type { AccountPrompt } from './prompt'
 
 export const directoryTools = {
@@ -45,6 +46,15 @@ export const instructionOverrides = [
                 transform(editor)
                 // Also applies to tools registered later, including MCP refreshes.
                 for (const tool of editor.list()) {
+                  const namespace = tool.options?.namespace
+                  // OpenCode's desktop RPC tools have no browser connection in this host.
+                  if (
+                    tool.options?.permission === 'browser' &&
+                    (namespace === 'browser' || namespace?.startsWith('browser.'))
+                  ) {
+                    editor.remove(tool.id)
+                    continue
+                  }
                   if (tool.options?.codemode === false) continue
                   editor.update(tool.id, (draft) => {
                     const { pinned: _pinned, ...options } = draft.options ?? {}
@@ -85,7 +95,7 @@ export function isDirectoryTool(name: string): name is keyof typeof directoryToo
 
 function toolGroup(name: string): Group {
   if (name === 'skill') return 'skills'
-  if (name.startsWith('browser_')) return 'browser'
+  if (name.startsWith('browser_') || name.startsWith(`${browserServer}_`)) return 'browser'
   if (name.startsWith('opencode_') || codingTools.has(name)) return 'coding'
   return 'generic'
 }

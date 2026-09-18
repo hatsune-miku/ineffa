@@ -66,7 +66,7 @@ test('directories open native tools per session, survive restart, and stay out o
     step++
     if (step === 1) {
       expect(names(request).sort()).toEqual(Object.keys(directoryTools).sort())
-      expect(systemText(request)).toContain('44 browser-specific tools loaded.')
+      expect(systemText(request)).toContain('0 browser-specific tools loaded.')
       return { tool: 'list_coding_tools', input: {} }
     }
     if (step === 2) {
@@ -152,7 +152,7 @@ test('native compaction can rediscover tools without a separate persisted direct
   }
 }, 30_000)
 
-test('all browser schemas are discoverable; skills load only on demand and respect permissions', async () => {
+test('disabled browser tools stay absent; skills load only on demand and respect permissions', async () => {
   let step = 0
   const f = await fixture((request) => {
     step++
@@ -174,7 +174,7 @@ test('all browser schemas are discoverable; skills load only on demand and respe
     }
     if (step === 4) {
       const tools = JSON.parse(toolResult(request)).tools as { name: string; input: { type?: string } }[]
-      expect(tools).toHaveLength(44)
+      expect(tools).toHaveLength(0)
       expect(tools.every((tool) => names(request).includes(tool.name))).toBe(true)
       expect(tools.every((tool) => tool.input.type === 'object')).toBe(true)
       const sent = request.tools as { function: { parameters: { type?: string } } }[]

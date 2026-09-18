@@ -1,5 +1,5 @@
 import { Plugin } from '@opencode/plugin'
-import type { OpenCode, OpenCodeEvent } from '@opencode/sdk'
+import type { OpenCodeEvent } from '@opencode/sdk'
 
 import { observeFirstSse } from './debug-stream'
 import { isDirectoryTool } from './tool-directory'
@@ -99,17 +99,6 @@ export class DebugTimings {
       })
     },
   })
-
-  instances(original?: OpenCode.CreateOptions['instances']): NonNullable<OpenCode.CreateOptions['instances']> {
-    return {
-      key: (session) => JSON.stringify([original?.key(session) ?? '', this.enabled(session.id)]),
-      configure: async (key) => {
-        const [base, debug] = JSON.parse(key) as [string, boolean]
-        const configured = original ? await original.configure(base) : { plugins: [] }
-        return { plugins: [...configured.plugins, ...(debug ? [this.plugin] : [])] }
-      },
-    }
-  }
 
   usage(event: Extract<OpenCodeEvent, { type: 'session.step.ended' | 'session.step.failed' }>) {
     const trace = this.traces.get(event.data.sessionID)

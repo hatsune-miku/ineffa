@@ -87,7 +87,8 @@ export async function fixture(
   reply: (request: ModelRequest) => ModelReply | Promise<ModelReply>,
   commands: Record<string, { template: string; description?: string }> = {},
   streamDelay = 0,
-  filewatcher = false
+  filewatcher = false,
+  browser = false
 ) {
   const root = resolve(process.env.INEFFA_TEST_DIR ?? 'test-results/runtime')
   await mkdir(root, { recursive: true })
@@ -180,6 +181,7 @@ export async function fixture(
     },
   })
   const config = {
+    browser,
     config: {
       content: JSON.stringify({
         model: 'ineffa-test/echo',

@@ -12,6 +12,7 @@
     "@opencode/core": "2.0.3",
     "@opencode/plugin": "2.0.3",
     "@opencode/sdk": "2.0.3",
+    "@playwright/mcp": "0.0.81",
     "effect": "4.0.0-rc.112"
   }
 }
