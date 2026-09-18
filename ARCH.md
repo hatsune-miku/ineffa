@@ -269,6 +269,8 @@ WebUI 配置迁移使用版本化明文 JSON，包含 `accounts.json`、服务�
 
 Ineffa 配置负责 Adapter 实例及其 OpenCode Agent/工作目录引用，并提供账号级 `agentPrompt.identity`（Agent 身份）和 `agentPrompt.task`（该做什么）。模型、工具、Skills、MCP 和执行权限继续复用 OpenCode 配置。
 
+内置 Agent 权限由 `ineffa.silent-permissions` 插件统一设为 `* → allow`：默认静默允许操作，不弹权限询问，既有会话重启后同样生效。无需等待权限事件再自动回复。调用方显式添加的会话权限规则、后注册插件规则仍沿用 OpenCode 的覆盖机制；平台访问名单、文件发送范围及大小校验保持独立。
+
 这两项是普通文本模板：`{displayName}` 使用账号配置的显示名称，`{platformId}` 使用 Adapter 已确认的真实平台账号 ID；只做一次字面替换，不执行表达式或递归展开。未填写的项直接省略，不追加 OpenCode 默认编程助手身份。Ineffa 不从项目目录或用户目录继承外部 `AGENTS.md`，也关闭其后续自动指令更新。
 
 OpenCode 插件在每次主对话模型请求前，通过现有 session 绑定读取当前账号配置。系统提示只保留身份/职责、当前账号与同会话其他账号的 `displayName`、`platformId` 和原生 mention、简短运行环境，以及四组目录数量。名单按账号 ID 稳定排序；不包含其他账号的身份/职责文本，不依赖对方先发言或创建 session，也不自动查询全平台成员。平台格式限制由 Adapter 的 `promptInstructions` 提供；只有 KOOK Adapter 追加不支持 Markdown 表格、LaTeX、`#` 标题的限制。

@@ -7,6 +7,7 @@ import type { OpenCode, OpenCodeEvent } from '@opencode/sdk'
 import { DebugTimings } from './debug'
 import { modelReference } from './model'
 import { createEmbedded } from './opencode-runtime'
+import { silentPermissions } from './permissions'
 import type { AccountPrompt } from './prompt'
 import { identity } from './store'
 import { instructionOverrides, toolDirectory } from './tool-directory'
@@ -137,6 +138,7 @@ export class OpenCodeBridge {
       await createEmbedded(
         {
           ...options,
+          plugins: [silentPermissions, ...(options.plugins ?? [])],
           instances: debug.instances(options.instances),
           app: { name: 'ineffa', version: '0.1.0', ...options.app },
           database: { path: resolve(dataDirectory, 'opencode.sqlite') },
