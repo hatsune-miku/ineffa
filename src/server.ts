@@ -41,6 +41,23 @@ async function body(request: Request): Promise<Record<string, unknown>> {
     throw new IneffaError('invalid_json', '请求正文不是有效的 JSON 对象。')
   }
 }
+
+function allowCrossOrigin(handle: (request: Request) => Promise<Response>) {
+  return async (request: Request) => {
+    const response = request.method === 'OPTIONS' ? new Response(null, { status: 204 }) : await handle(request)
+    response.headers.set('Access-Control-Allow-Origin', request.headers.get('origin') ?? '*')
+    response.headers.set('Access-Control-Allow-Credentials', 'true')
+    response.headers.set('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS')
+    response.headers.set(
+      'Access-Control-Allow-Headers',
+      request.headers.get('access-control-request-headers') ?? 'Authorization, Content-Type'
+    )
+    response.headers.set('Access-Control-Expose-Headers', 'Content-Disposition')
+    response.headers.append('Vary', 'Origin, Access-Control-Request-Headers')
+    return response
+  }
+}
+
 export function createServer(host: Host, options: ServerOptions) {
   const hostname = options.hostname ?? '127.0.0.1'
   if (!['127.0.0.1', 'localhost', '::1'].includes(hostname) && !options.token)
@@ -98,7 +115,7 @@ export function createServer(host: Host, options: ServerOptions) {
     port: options.port ?? 4097,
     idleTimeout: 0,
     maxRequestBodySize: 2 * 1024 * 1024,
-    async fetch(request) {
+    fetch: allowCrossOrigin(async (request) => {
       const url = new URL(request.url)
       const path = url.pathname
       let releaseConfiguration: (() => void) | undefined
@@ -107,11 +124,6 @@ export function createServer(host: Host, options: ServerOptions) {
         const localNames = ['localhost', '127.0.0.1', '[::1]', hostname]
         if (!publicOrigin && !localNames.includes(url.hostname))
           throw new IneffaError('invalid_host', '请求的主机名不受此服务信任。', 403)
-        const origin = request.headers.get('origin')
-        if (origin && origin !== (publicOrigin ?? url.origin))
-          throw new IneffaError('invalid_origin', '拒绝来自其他网站的请求。', 403)
-        if (request.headers.get('sec-fetch-site') === 'cross-site')
-          throw new IneffaError('cross_site_request', '拒绝跨站访问。', 403)
         if (path === '/api/login' && request.method === 'POST') {
           const data = await body(request)
           if (!options.token || !equal(String(data.token ?? ''), options.token))
@@ -734,7 +746,7 @@ export function createServer(host: Host, options: ServerOptions) {
       } finally {
         releaseConfiguration?.()
       }
-    },
+    }),
   })
   return {
     server,

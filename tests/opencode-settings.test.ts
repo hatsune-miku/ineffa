@@ -94,7 +94,7 @@ test('UI settings persist native MCP/agent/runtime config, preserve JSONC and ru
       },
       body: JSON.stringify({ model: '' }),
     })
-    expect(foreign.status).toBe(403)
+    expect(foreign.status).toBe(200)
     expect(
       (
         await request('/opencode/agents/save', {

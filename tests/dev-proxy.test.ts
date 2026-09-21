@@ -7,7 +7,7 @@ import { fixture, until } from './fixture'
 import { AccountsConfig } from '../src/config'
 import { createServer } from '../src/server'
 
-test('Vite accepts same-origin localhost and IP requests while rejecting foreign origins', async () => {
+test('Vite accepts arbitrary origins, Referer and cross-site requests including preflight', async () => {
   const f = await fixture(() => 'unused')
   const app = createServer(f.host, {
     directory: f.workspace,
@@ -66,18 +66,28 @@ test('Vite accepts same-origin localhost and IP requests while rejecting foreign
     const origin = `http://127.0.0.1:${port}`
     for (const foreign of ['https://evil.example', 'null', `http://127.0.0.1:${port + 1}`]) {
       const response = await fetch(`${origin}/api/health`, {
-        headers: { Origin: foreign },
+        headers: { Origin: foreign, Referer: 'https://another.example/page' },
         signal: AbortSignal.timeout(5000),
       })
-      expect(response.status).toBe(403)
-      expect((await response.json()).error.code).toBe('invalid_origin')
+      expect(response.status).toBe(200)
+      expect(response.headers.get('access-control-allow-origin')).toBe(foreign)
     }
     const crossSite = await fetch(`${origin}/api/health`, {
       headers: { Origin: origin, 'Sec-Fetch-Site': 'cross-site' },
       signal: AbortSignal.timeout(5000),
     })
-    expect(crossSite.status).toBe(403)
-    expect((await crossSite.json()).error.code).toBe('cross_site_request')
+    expect(crossSite.status).toBe(200)
+    const preflight = await fetch(`${origin}/api/adapters`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://other.example',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'authorization,content-type,x-custom-header',
+      },
+    })
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('https://other.example')
+    expect(preflight.headers.get('access-control-allow-headers')).toContain('x-custom-header')
     expect(f.host.adapters.size).toBe(0)
   } finally {
     proxy.kill()

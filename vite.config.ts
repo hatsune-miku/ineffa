@@ -10,10 +10,10 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     strictPort: true,
+    cors: { origin: true, credentials: true },
     proxy: {
       '/api/': {
         target: 'http://127.0.0.1:4097',
-        // Preserve the browser's Host and Origin so the backend can compare them directly.
         changeOrigin: false,
       },
     },

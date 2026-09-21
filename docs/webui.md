@@ -1,5 +1,7 @@
 # WebUI
 
+服务允许任意来源的 CORS 请求与 OPTIONS 预检，不校验 Origin、Referer 或 Sec-Fetch-Site。配置了访问令牌时，实际 API 请求仍需认证。
+
 ## 连接与运行
 
 | 页面 | 功能 |

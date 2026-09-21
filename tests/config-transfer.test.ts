@@ -201,7 +201,7 @@ test('configuration API requires authentication, never caches secrets, and freez
   }
   try {
     expect((await post('/config/export', {}, '')).status).toBe(401)
-    expect((await post('/config/export', {}, 'test-auth', { Origin: 'https://other.example' })).status).toBe(403)
+    expect((await post('/config/export', {}, 'test-auth', { Origin: 'https://other.example' })).status).toBe(200)
     const response = await post('/config/export', {})
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('content-disposition')).toContain('attachment')

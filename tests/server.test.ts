@@ -9,7 +9,7 @@ import { acquireOwnership } from '../src/ownership'
 import { createServer } from '../src/server'
 import { webAdapter } from '../src/web-adapter'
 
-test('Web API authenticates, enforces origins, and operates real persistent sessions', async () => {
+test('Web API authenticates cross-origin requests and operates real persistent sessions', async () => {
   const f = await fixture(() => 'WEB_REPLY')
   await f.host.addAdapter(webAdapter(f.workspace))
   const app = createServer(f.host, {
@@ -28,16 +28,38 @@ test('Web API authenticates, enforces origins, and operates real persistent sess
   }
   try {
     expect((await fetch(base + '/api/sessions')).status).toBe(401)
+    const crossHeaders = {
+      Origin: 'https://other.example',
+      Referer: 'https://unrelated.example/page',
+      'Sec-Fetch-Site': 'cross-site',
+    }
+    const unauthorized = await fetch(base + '/api/sessions', { headers: crossHeaders })
+    expect(unauthorized.status).toBe(401)
+    expect(unauthorized.headers.get('access-control-allow-origin')).toBe(crossHeaders.Origin)
+    const preflight = await fetch(base + '/api/sessions', {
+      method: 'OPTIONS',
+      headers: {
+        ...crossHeaders,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'authorization,content-type,x-custom-header',
+      },
+    })
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers.get('access-control-allow-origin')).toBe(crossHeaders.Origin)
+    expect(preflight.headers.get('access-control-allow-credentials')).toBe('true')
+    expect(preflight.headers.get('access-control-allow-methods')).toContain('POST')
+    expect(preflight.headers.get('access-control-allow-headers')).toContain('x-custom-header')
+    expect(preflight.headers.get('vary')).toContain('Origin')
     expect(
       (
         await fetch(base + '/api/health', {
           headers: { Origin: 'https://evil.example', Authorization: 'Bearer test-secret' },
         })
       ).status
-    ).toBe(403)
+    ).toBe(200)
     const login = await fetch(base + '/api/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...crossHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: 'test-secret' }),
     })
     expect(login.status).toBe(200)
