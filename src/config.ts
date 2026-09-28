@@ -9,7 +9,7 @@ export interface AppConfig {
   dataDirectory?: string
   adapters?: Adapter[]
   opencode?: OpenCodeOptions
-  limits?: Partial<{ maxBotTurns: number; maxPending: number }>
+  limits?: Partial<{ maxPending: number }>
 }
 export async function readConfig(): Promise<AppConfig> {
   const path = resolve(process.env.INEFFA_CONFIG ?? 'ineffa.config.ts')

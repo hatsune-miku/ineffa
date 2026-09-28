@@ -37,19 +37,19 @@ export class Host {
   private controller = new AbortController()
   private stream?: Promise<void>
   private readonly promptsReady: Promise<void>
-  readonly limits: { maxBotTurns: number; maxPending: number }
+  readonly limits: { maxPending: number }
   constructor(
     readonly store: Store,
     readonly engine: OpenCodeBridge,
-    limits: Partial<{ maxBotTurns: number; maxPending: number }> = {}
+    limits: Partial<{ maxPending: number }> = {}
   ) {
-    this.limits = { maxBotTurns: 12, maxPending: 128, ...limits }
+    this.limits = { maxPending: limits.maxPending ?? 128 }
     engine.debug.enabled = (sessionId) => {
       const binding = store.bySession(sessionId)
       return Boolean(binding?.debug && !binding.archivedAt)
     }
     if (Object.values(this.limits).some((value) => !Number.isSafeInteger(value) || value < 1))
-      throw new IneffaError('invalid_limits', '协作与排队上限必须是正整数。')
+      throw new IneffaError('invalid_limits', '排队上限必须是正整数。')
     this.delivery = new Delivery(
       store,
       (id) => this.adapter(id),
@@ -358,7 +358,7 @@ export class Host {
         await this.resetBinding(binding.id, input)
         return this.store.inbound(id)!
       }
-      const saved = this.store.admit(input, this.limits.maxBotTurns, context)
+      const saved = this.store.admit(input, context)
       if (saved.fresh && wake) await this.submit(saved.item)
       else if (saved.fresh) this.emit({ type: 'change', bindingId: binding.id })
       return this.store.inbound(id)!
@@ -571,31 +571,22 @@ export class Host {
     const mentions = adapter.mentions(output.text)
     for (const peer of this.conversationPeers(adapter, binding.address)) {
       if (this.store.hasResetSince(peer.id, binding.address.id, root.createdAt)) continue
-      try {
-        await this.receive(
-          peer.id,
-          {
-            id: output.messageId,
-            address: binding.address,
-            author: { id: adapter.identity.id, name: adapter.name, bot: true },
-            text: output.text,
-            files: output.files,
-            mentions,
-            createdAt: output.createdAt,
-            quote: parent?.message.text,
-            quoteId: parent?.message.id,
-            quoteAuthor: parent?.message.author,
-          },
-          { rootId: root.id }
-        )
-      } catch (error) {
-        if (error instanceof IneffaError && error.code === 'collaboration_limit') {
-          const notice = this.store.prepareOutput(binding.id, `limit:${root.id}`, null, error.message, {
-            kind: 'notice',
-          })
-          void this.delivery.enqueue(notice.id)
-        } else throw error
-      }
+      await this.receive(
+        peer.id,
+        {
+          id: output.messageId,
+          address: binding.address,
+          author: { id: adapter.identity.id, name: adapter.name, bot: true },
+          text: output.text,
+          files: output.files,
+          mentions,
+          createdAt: output.createdAt,
+          quote: parent?.message.text,
+          quoteId: parent?.message.id,
+          quoteAuthor: parent?.message.author,
+        },
+        { rootId: root.id }
+      )
     }
   }
   async stop(bindingId: string, cancelQueued = true) {

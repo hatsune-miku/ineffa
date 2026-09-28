@@ -63,6 +63,30 @@ test("B and C report asynchronously into A's original session, preserving A's in
   }
 }, 30_000)
 
+test('one collaboration chain continues beyond twelve automatic wakes', async () => {
+  let replies = 0
+  const f = await fixture((request) => {
+    if (++replies === 16) return 'CHAIN_DONE'
+    return modelAccount(request)?.platformId === 'A' ? '@B continue' : '@A continue'
+  })
+  try {
+    const a = new TestAdapter('A', f.workspace)
+    const b = new TestAdapter('B', f.workspace)
+    await f.host.addAdapter(a)
+    await f.host.addAdapter(b)
+    const input = await f.host.receive('A', human('long-chain', 'start'))
+    await until(() => b.sent.some((message) => message.text === 'CHAIN_DONE'), 45_000)
+    expect(replies).toBe(16)
+    expect(f.requests).toHaveLength(16)
+    const outputs = f.store.outputs().filter((output) => output.kind === 'reply' && output.inputId)
+    expect(outputs).toHaveLength(16)
+    expect(outputs.every((output) => f.store.inbound(output.inputId!)?.rootId === input!.rootId)).toBe(true)
+    expect(f.store.outputs().some((output) => output.text.includes('自动唤醒上限'))).toBe(false)
+  } finally {
+    await f.close()
+  }
+}, 60_000)
+
 test('duplicate inputs do not execute twice; queue waits for the ongoing turn', async () => {
   let release!: () => void
   const gate = new Promise<void>((resolve) => {

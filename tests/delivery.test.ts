@@ -247,7 +247,7 @@ describe('confirmed public delivery', () => {
       f.store.close()
     }
   })
-  test('durable root budget and stable identifiers stop mention loops', () => {
+  test('automatic wakes have no turn limit while duplicate IDs and reset boundaries remain enforced', () => {
     const f = setup()
     try {
       function make(id: string): Inbound {
@@ -262,10 +262,11 @@ describe('confirmed public delivery', () => {
           createdAt: Date.now(),
         }
       }
-      expect(f.store.admit(make('one'), 2).fresh).toBe(true)
-      expect(f.store.admit(make('one'), 2).fresh).toBe(false)
-      f.store.admit(make('two'), 2)
-      expect(() => f.store.admit(make('three'), 2)).toThrow('自动唤醒上限')
+      for (let turn = 0; turn < 100; turn++) {
+        const input = make(`turn-${turn}`)
+        expect(f.store.admit(input).fresh).toBe(true)
+        expect(f.store.admit(input).fresh).toBe(false)
+      }
       f.store.archive(f.binding.id)
       const next = f.store.ensure('A', f.binding.address, 'build', process.cwd())
       expect(next.sessionId).not.toBe(f.binding.sessionId)

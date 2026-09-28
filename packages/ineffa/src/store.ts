@@ -169,7 +169,7 @@ export class Store {
       const next = this.ensure(binding.adapterId, binding.address, binding.agent, binding.directory)
       this.setDebug(next.id, binding.debug)
       // Commit the new binding and the command receipt together: a duplicate /new cannot reset twice.
-      if (input) this.admit({ ...input, bindingId: next.id }, 1)
+      if (input) this.admit({ ...input, bindingId: next.id })
       return this.binding(next.id)
     })()
   }
@@ -254,23 +254,10 @@ export class Store {
       .all(inputId) as Row[]
     return rows.flatMap((row) => inbound(row).message.files ?? [])
   }
-  admit(item: Inbound, maxBotTurns: number, context: Inbound[] = []): { item: Inbound; fresh: boolean } {
+  admit(item: Inbound, context: Inbound[] = []): { item: Inbound; fresh: boolean } {
     return this.db.transaction(() => {
       const existing = this.inbound(item.id)
       if (existing) return { item: existing, fresh: false }
-      if (item.message.author.bot && item.state !== 'observed') {
-        const used = this.db
-          .query("SELECT COUNT(*) AS n FROM inbound WHERE rootId=? AND bot=1 AND state<>'observed'")
-          .get(item.rootId) as {
-          n: number
-        }
-        if (used.n >= maxBotTurns)
-          throw new IneffaError(
-            'collaboration_limit',
-            `这轮协作已达到 ${maxBotTurns} 次自动唤醒上限，请发送新指令继续。`,
-            429
-          )
-      }
       this.db
         .query(
           'INSERT INTO inbound(id,bindingId,message,prompt,rootId,bot,state,createdAt,command) VALUES(?,?,?,?,?,?,?,?,?)'
