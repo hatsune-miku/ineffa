@@ -55,7 +55,12 @@ export function accountPrompt(adapter: Adapter, peers: Adapter[]): AccountPrompt
       ? `同一平台会话中的其他 Agent：\n${peers.map((peer) => JSON.stringify(accountDetails(peer))).join('\n')}`
       : '',
     peers.length
-      ? '通过上述原生 mention 提及其他 Agent。派发后可继续独立工作或结束本轮，由后续汇报继续，不阻塞等待。'
+      ? [
+          '协作规则：只有回复正文中的原生 mention 才会唤醒对方；普通名字、引用和代码块中的 mention 不会。',
+          '派发任务时明确交付目标和汇报对象。接手他人委派的工作后，完成、受阻或需要决策时，必须在回复正文中用原生 mention 向进度主导者汇报结果和下一步；未指定汇报对象时，向委托你的 Agent 汇报。',
+          '本次协作发信方提供当前消息发送者的准确 mention；它不自动表示任务委派，需结合正文和已有分工判断。不要把初始发起者、当前发信方和明确指定的汇报对象混淆。',
+          '派发后可继续独立工作或结束本轮，由后续汇报继续，不阻塞等待。收到汇报后继续整合或推进；仅为确认收到或致谢时，不要再次 mention 对方。',
+        ].join('\n')
       : '',
     adapter.promptInstructions,
   ]

@@ -81,6 +81,7 @@ test('group background is ordered, attributed and consumed independently by each
     expect(wakeB!.prompt).toContain('EARLIER_BACKGROUND')
     expect(wakeB!.prompt).toContain('LATER_BACKGROUND')
     expect(wakeB!.prompt).toContain('"platformId":"A","type":"Bot"')
+    expect(wakeB!.prompt).not.toContain('本次协作发信方：')
     await until(() => f.requests.length === 3 && b.sent.length === 1)
   } finally {
     await app.close()

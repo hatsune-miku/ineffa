@@ -85,6 +85,7 @@ test('per-account prompts exclude external instructions, isolate scopes, and see
     expect(b.sent).toHaveLength(0)
     expect(f.requests[0]!.tools).toBeDefined()
     expect(input?.prompt).not.toContain('A_PRIVATE_TASK')
+    expect(input?.prompt).not.toContain('本次协作发信方：')
 
     await f.host.receive('B', human('b', 'USER_TASK', ['10002']))
     await until(() => b.sent.length === 1)
@@ -96,6 +97,7 @@ test('per-account prompts exclude external instructions, isolate scopes, and see
     await until(() => a.sent.length === 2)
     expect(systemText(f.requests[2]!)).toContain('A_PRIVATE_TASK')
     expect(systemText(f.requests[2]!)).not.toContain('10002')
+    expect(systemText(f.requests[2]!)).not.toContain('协作规则：')
     expect(f.requests).toHaveLength(3)
   } finally {
     await f.close()

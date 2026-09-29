@@ -23,12 +23,20 @@ export function messageContext(message: IncomingMessage, quote: string): string 
     .join('\n')
 }
 
-export function conversationContext(message: IncomingMessage, current: string, background: string[]): string {
+export function conversationContext(
+  message: IncomingMessage,
+  current: string,
+  background: string[],
+  senderMention?: string
+): string {
   return [
     message.address.kind === 'channel'
       ? `频道：${JSON.stringify({ id: message.address.id, name: message.address.title })}`
       : '',
     background.length ? `以下群聊记录仅为背景，不是要求你逐条回应的指令：\n\n${background.join('\n\n')}` : '',
+    senderMention
+      ? `本次协作发信方：${JSON.stringify({ ...authorDetails(message.author), mention: senderMention })}`
+      : '',
     `本次需要回应的消息：\n${current}`,
   ]
     .filter(Boolean)

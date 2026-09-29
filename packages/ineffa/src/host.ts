@@ -336,11 +336,16 @@ export class Host {
       const context = wake && !command ? this.store.observed(binding.id) : []
       context.sort((left, right) => left.message.createdAt - right.message.createdAt)
       const current = messageContext(message, quote)
+      const sender =
+        source && wake
+          ? this.conversationPeers(adapter, message.address).find((peer) => peer.identity?.id === message.author.id)
+          : undefined
       const prompt = wake
         ? conversationContext(
             message,
             current,
-            context.map((item) => item.prompt)
+            context.map((item) => item.prompt),
+            sender?.identity ? adapter.mention(sender.identity) : undefined
           )
         : current
       const input: Inbound = {

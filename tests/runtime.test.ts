@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Host, OpenCodeBridge, Store } from 'ineffa'
 import { join } from 'node:path'
 
-import { TestAdapter, fixture, human, modelAccount, until } from './fixture'
+import { TestAdapter, fixture, human, modelAccount, systemText, until } from './fixture'
 
 test('embedded OpenCode receives input and publishes a confirmed reply', async () => {
   const f = await fixture(() => 'fixture response')
@@ -57,8 +57,47 @@ test("B and C report asynchronously into A's original session, preserving A's in
     expect(a.sent.length).toBe(3)
     expect(b.sent.length).toBe(1)
     expect(c.sent.length).toBe(1)
+    for (const request of f.requests) {
+      expect(systemText(request)).toContain('完成、受阻或需要决策时，必须在回复正文中用原生 mention')
+      expect(systemText(request)).toContain('不要再次 mention 对方')
+    }
+    const toB = f.requests.find((request) => modelAccount(request)?.platformId === 'B')!
+    expect(JSON.stringify(toB.messages)).toContain('本次协作发信方：')
+    expect(JSON.stringify(toB.messages)).toContain('\\"mention\\":\\"@A\\"')
+    const toA = f.requests.filter((request) => modelAccount(request)?.platformId === 'A').at(-1)!
+    expect(JSON.stringify(toA.messages)).toContain('\\"mention\\":\\"@C\\"')
   } finally {
     releaseC()
+    await f.close()
+  }
+}, 30_000)
+
+test('nested delegation identifies the immediate sender using the adapter mention syntax', async () => {
+  let bTurns = 0
+  let aTurns = 0
+  const f = await fixture((request) => {
+    const account = modelAccount(request)?.platformId
+    if (account === 'A') return ++aTurns === 1 ? '(met)B(met) delegate' : 'FINISHED'
+    if (account === 'B') return ++bTurns === 1 ? '(met)C(met) delegate' : '(met)A(met) report'
+    return '(met)B(met) report'
+  })
+  try {
+    const adapters = ['A', 'B', 'C'].map((id) => new TestAdapter(id, f.workspace))
+    for (const adapter of adapters) {
+      adapter.mention = ({ id }) => `(met)${id}(met)`
+      adapter.mentions = (text) => [...text.matchAll(/\(met\)([ABC])\(met\)/g)].map((match) => match[1]!)
+      await f.host.addAdapter(adapter)
+    }
+    await f.host.receive('A', human('nested', 'start'))
+    await until(() => f.store.outputs().some((output) => output.text === 'FINISHED' && output.relayed))
+    const senders = f.requests.map((request) => {
+      const content = JSON.stringify(request.messages.at(-1)?.content)
+      return ['A', 'B', 'C'].find((id) => content.includes(`\\"mention\\":\\"(met)${id}(met)\\"`))
+    })
+    expect(senders).toEqual([undefined, 'A', 'B', 'C', 'B'])
+    expect(f.requests).toHaveLength(5)
+    expect(adapters[0]!.sent.at(-1)?.text).toBe('FINISHED')
+  } finally {
     await f.close()
   }
 }, 30_000)
