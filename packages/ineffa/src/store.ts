@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { createHash, randomUUID } from 'node:crypto'
 
+import type { Backend } from './engine'
 import type { Address, Attachment, Binding, Inbound, Outbound, OutputKind } from './types'
 import { IneffaError } from './types'
 
@@ -9,7 +10,12 @@ export function identity(prefix: string, ...parts: string[]) {
 }
 type Row = Record<string, unknown>
 function binding(row: Row): Binding {
-  return { ...row, address: JSON.parse(String(row.address)), debug: Boolean(row.debug) } as Binding
+  return {
+    ...row,
+    address: JSON.parse(String(row.address)),
+    debug: Boolean(row.debug),
+    model: row.model ?? undefined,
+  } as Binding
 }
 function inbound(row: Row): Inbound {
   return {
@@ -34,7 +40,7 @@ export class Store {
     this.db = new Database(path, { create: true, strict: true })
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;')
     const version = this.db.query('PRAGMA user_version').get() as { user_version: number }
-    if (version.user_version > 8) throw new Error('投递数据库来自较新的 Ineffa 版本，请恢复配套备份。')
+    if (version.user_version > 9) throw new Error('投递数据库来自较新的 Ineffa 版本，请恢复配套备份。')
     this.db.transaction(() => {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS bindings (
@@ -94,7 +100,12 @@ export class Store {
         `)
       }
       if (version.user_version < 8) this.db.exec('ALTER TABLE outbound ADD COLUMN notes TEXT;')
-      this.db.exec('PRAGMA user_version=8;')
+      if (version.user_version < 9) {
+        this.db.exec(
+          "ALTER TABLE bindings ADD COLUMN backend TEXT NOT NULL DEFAULT 'opencode'; ALTER TABLE bindings ADD COLUMN model TEXT;"
+        )
+      }
+      this.db.exec('PRAGMA user_version=9;')
     })()
     // A process may have died after the remote side accepted a send. Do not resend blindly.
     this.db
@@ -130,7 +141,14 @@ export class Store {
       .get(adapterId, conversationId) as Row | null
     return row ? binding(row) : undefined
   }
-  ensure(adapterId: string, address: Address, agent: string, directory: string): Binding {
+  ensure(
+    adapterId: string,
+    address: Address,
+    agent: string,
+    directory: string,
+    backend: Backend = 'opencode',
+    model?: string
+  ): Binding {
     return this.db.transaction(() => {
       const previous = this.current(adapterId, address.id)
       if (previous) return previous
@@ -138,7 +156,7 @@ export class Store {
       const now = Date.now()
       this.db
         .query(
-          'INSERT INTO bindings(id,adapterId,conversationId,address,agent,directory,sessionId,createdAt,updatedAt) VALUES(?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO bindings(id,adapterId,conversationId,address,agent,directory,sessionId,createdAt,updatedAt,backend,model) VALUES(?,?,?,?,?,?,?,?,?,?,?)'
         )
         .run(
           id,
@@ -149,7 +167,9 @@ export class Store {
           directory,
           `ses_${id.replaceAll('-', '')}`,
           now,
-          now
+          now,
+          backend,
+          model ?? null
         )
       return this.binding(id)
     })()
@@ -166,7 +186,14 @@ export class Store {
   replace(binding: Binding, input?: Inbound): Binding {
     return this.db.transaction(() => {
       this.archive(binding.id)
-      const next = this.ensure(binding.adapterId, binding.address, binding.agent, binding.directory)
+      const next = this.ensure(
+        binding.adapterId,
+        binding.address,
+        binding.agent,
+        binding.directory,
+        binding.backend,
+        binding.model
+      )
       this.setDebug(next.id, binding.debug)
       // Commit the new binding and the command receipt together: a duplicate /new cannot reset twice.
       if (input) this.admit({ ...input, bindingId: next.id })

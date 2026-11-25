@@ -97,6 +97,42 @@ export class ProviderSettings {
       .map(([id, item]) => view(id, item))
   }
 
+  async piModels() {
+    const { config } = await this.document()
+    return Object.entries(config.providers ?? {}).flatMap(([provider, settings]) => {
+      if (settings.package !== compatiblePackage) return []
+      return Object.entries(settings.models ?? {})
+        .filter(([, model]) => !model.disabled)
+        .map(([id, model]) => ({
+          id: `${provider}/${id}`,
+          name: model.name ?? id,
+          provider,
+        }))
+    })
+  }
+
+  async resolvePiModel(reference?: string) {
+    if (!reference) throw new IneffaError('missing_model', '请为 Pi 会话绑定模型。')
+    const slash = reference.indexOf('/')
+    const provider = reference.slice(0, slash)
+    const id = reference.slice(slash + 1)
+    const { config } = await this.document()
+    const settings = config.providers?.[provider]
+    const model = settings?.models?.[id]
+    if (slash < 1 || settings?.package !== compatiblePackage || !model || model.disabled)
+      throw new IneffaError('invalid_model', 'Pi 需要已配置的 OpenAI 兼容模型。')
+    return {
+      id,
+      provider,
+      name: model.name ?? id,
+      baseURL: providerBaseURL(settings.settings?.baseURL),
+      apiKey: apiKey(settings.settings?.apiKey),
+      contextWindow: model.limit?.context,
+      maxTokens: model.limit?.output,
+      input: model.capabilities?.input.filter((kind): kind is 'text' | 'image' => kind === 'text' || kind === 'image'),
+    }
+  }
+
   async discover(data: Record<string, unknown>, signal?: AbortSignal) {
     const baseURL = providerBaseURL(data.baseURL)
     let key = apiKey(data.key)

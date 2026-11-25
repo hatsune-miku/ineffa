@@ -1,12 +1,11 @@
-import type { OpenCodeEvent } from '@opencode/sdk'
-
 import { Delivery } from './delivery'
-import type { OpenCodeBridge } from './opencode'
+import type { EngineEvent } from './engine'
 import { isDirectoryTool } from './tool-directory'
 import type { Binding } from './types'
 
 type Turn = {
   sourceId?: string
+  activeMessageId?: string
   bodies: Map<string, string>
   tools: Map<string, string>
   tokens: Map<string, number>
@@ -14,7 +13,7 @@ type Turn = {
   finished?: boolean
   interrupted?: boolean
 }
-type JournalEvent = ReturnType<OpenCodeBridge['log']> extends AsyncIterable<infer Event> ? Event : never
+type JournalEvent = EngineEvent
 
 export function formatOutputTokens(count: number | undefined): string {
   if (count === undefined) return '— tks'
@@ -24,7 +23,7 @@ export function formatOutputTokens(count: number | undefined): string {
   return `${value} ${unit}`
 }
 
-/** Platform presentation only. OpenCode retains ownership of execution and conversation history. */
+/** Platform presentation only. The backend retains ownership of execution and conversation history. */
 export class Presentation {
   private turns = new Map<string, Turn>()
   private text = new Map<string, { id: string; parts: Map<number, string> }>()
@@ -32,7 +31,7 @@ export class Presentation {
 
   constructor(private delivery: Delivery) {}
 
-  delta(binding: Binding, event: Extract<OpenCodeEvent, { type: 'session.text.delta' }>) {
+  delta(binding: Binding, event: Extract<EngineEvent, { type: 'session.text.delta' }>) {
     const { assistantMessageID: id, ordinal, delta } = event.data
     if (this.completed.get(binding.id) === id) return
     let draft = this.text.get(binding.id)
@@ -44,7 +43,7 @@ export class Presentation {
       .map(([, text]) => text)
       .join('\n\n')
     const turn = this.turns.get(binding.id)
-    if (!turn || turn.finished) return
+    if (!turn || turn.finished || turn.activeMessageId !== id) return
     turn.sourceId ??= id
     turn.bodies.set(id, text)
     if (text.trim()) this.publish(binding, turn, false)
@@ -57,7 +56,7 @@ export class Presentation {
     }
     let turn = this.turns.get(binding.id)
     if (!turn) return
-    // OpenCode may drain several queued inputs inside one execution.
+    // A backend may drain several queued inputs inside one execution.
     if (event.type === 'session.step.started' && turn.finished) {
       turn = { bodies: new Map(), tools: new Map(), tokens: new Map() }
       this.turns.set(binding.id, turn)
@@ -66,6 +65,7 @@ export class Presentation {
     let complete = false
     switch (event.type) {
       case 'session.step.started':
+        turn.activeMessageId = event.data.assistantMessageID
         turn.sourceId ??= event.data.assistantMessageID
         break
       case 'session.reasoning.started':
@@ -84,7 +84,7 @@ export class Presentation {
       case 'session.step.ended':
       case 'session.step.failed': {
         const tokens = event.data.tokens
-        // OpenCode output counts visible tokens; reasoning is reported separately.
+        // Backend adapters normalize visible output and reasoning separately.
         if (tokens) turn.tokens.set(event.data.assistantMessageID, tokens.output + tokens.reasoning)
         if (this.text.get(binding.id)?.id === event.data.assistantMessageID) this.text.delete(binding.id)
         this.completed.set(binding.id, event.data.assistantMessageID)

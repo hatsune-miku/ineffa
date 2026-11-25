@@ -16,7 +16,7 @@ import { type Account, type Catalog, type ProviderView, api } from '../../../api
 import { Icon } from '../../../components/Icon'
 import { IconButton } from '../../../components/IconButton'
 import { Loading } from '../../../components/Loading'
-import { messageOf, timeOf } from '../../../utils'
+import { messageOf, platformName, timeOf } from '../../../utils'
 
 import './index.css'
 
@@ -234,7 +234,7 @@ export function Settings({
                       }}
                     >
                       <Icon name="plus" />
-                      添加 KOOK 账号
+                      添加账号
                     </Button>
                   </div>
                   {accounts ? (
@@ -247,7 +247,9 @@ export function Settings({
                           <div className="grow">
                             <strong className="connection-name">{a.name}</strong>
                             <span className="muted connection-description">
-                              {a.platform === 'web' ? '浏览器会话' : `${a.identity?.name ?? a.id} · ${a.agent}`}
+                              {a.platform === 'web'
+                                ? '浏览器会话'
+                                : `${platformName(a.platform)} · ${a.identity?.name ?? a.id} · ${a.backend === 'pi' ? 'Pi' : 'OpenCode'}`}
                             </span>
                             {a.model && <span className="muted connection-description">{a.model}</span>}
                             {a.status.error && <p className="error-text">{a.status.error}</p>}
@@ -293,7 +295,7 @@ export function Settings({
                 <section className="settings-section runtime-section">
                   <div>
                     <h2 className="section-heading">本地运行</h2>
-                    <p className="muted runtime-version">Ineffa 0.1.0 · OpenCode 2.0.3 · Bun</p>
+                    <p className="muted runtime-version">Ineffa 0.1.0 · OpenCode 2.0.3 · Pi 1.6.0 · Bun</p>
                   </div>
                   <Badge>进程内接入</Badge>
                 </section>

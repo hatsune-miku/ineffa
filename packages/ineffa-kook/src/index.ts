@@ -51,6 +51,7 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
   let agentPrompt = validateAgentPrompt(options.agentPrompt)
   modelReference(options.model)
   let model = options.model?.trim() || undefined
+  let backend = options.backend ?? 'opencode'
   let displayName = options.name?.trim() || options.id
   let context: AdapterContext | undefined
   let attached = false
@@ -124,12 +125,16 @@ export function kook(options: KookOptions): Adapter & { native: KookClient } {
     get model() {
       return model
     },
+    get backend() {
+      return backend
+    },
     updateProfile(profile) {
       const nextPrompt = validateAgentPrompt(profile.agentPrompt)
       modelReference(profile.model)
       displayName = profile.name?.trim() || options.id
       agentPrompt = nextPrompt
       model = profile.model?.trim() || undefined
+      backend = profile.backend ?? 'opencode'
     },
     native: client,
     get identity() {

@@ -52,7 +52,7 @@ export function Conversation({
   const [busy, setBusy] = useState(false)
   const [initialDraft] = useState(() => savedDraft(binding.id))
   const [draft, setDraft] = useState(initialDraft.text)
-  const [mode, setMode] = useState(initialDraft.pending?.mode ?? 'queue')
+  const [mode, setMode] = useState(detail.capabilities.steer ? (initialDraft.pending?.mode ?? 'queue') : 'queue')
   const [sending, setSending] = useState(false)
   const submitted = useRef<Submitted | null>(initialDraft.pending ?? null)
   const input = useRef<HTMLTextAreaElement>(null)
@@ -225,12 +225,14 @@ export function Conversation({
                   <div className="queue-row" key={item.id}>
                     <span className="queue-text">{item.text}</span>
                     <Badge className="queue-delivery">{item.delivery === 'steer' ? '接入当前轮' : '排队'}</Badge>
-                    <IconButton
-                      label="接入当前轮"
-                      icon="arrow"
-                      disabled={busy || item.delivery === 'steer'}
-                      onClick={() => void safely(() => action('queue/steer', { id: item.id }))}
-                    />
+                    {detail.capabilities.steer && (
+                      <IconButton
+                        label="接入当前轮"
+                        icon="arrow"
+                        disabled={busy || item.delivery === 'steer'}
+                        onClick={() => void safely(() => action('queue/steer', { id: item.id }))}
+                      />
+                    )}
                     <IconButton
                       label="取消这条输入"
                       icon="close"
@@ -286,7 +288,7 @@ export function Conversation({
                   onChange={(e) => setMode(e.target.value)}
                 >
                   <option value="queue">排队处理</option>
-                  <option value="steer">接入当前轮</option>
+                  {detail.capabilities.steer && <option value="steer">接入当前轮</option>}
                 </ComboBox>
                 <span className="grow" />
                 {detail.running && (
@@ -312,9 +314,7 @@ export function Conversation({
           ) : (
             <div className="readonly-composer">
               <Icon name={binding.archivedAt ? 'archive' : 'chat'} />
-              <span>
-                {binding.archivedAt ? '会话已归档，可以继续查看历史记录。' : '请在 KOOK 对应频道发言并提及这个 Agent。'}
-              </span>
+              <span>{binding.archivedAt ? '会话已归档，可以继续查看历史记录。' : '请在对应平台的会话中发言。'}</span>
               {detail.running && (
                 <Button size="small" disabled={busy} onClick={() => void safely(() => action('stop'))}>
                   停止
@@ -324,7 +324,10 @@ export function Conversation({
           )}
           <div className="composer-note">
             <span>{writable ? 'Enter 发送 · Shift + Enter 换行' : binding.adapterId}</span>
-            <span className="composer-model">{detail.info.model ? detail.info.model.id : binding.agent}</span>
+            <span className="composer-model">
+              {binding.backend === 'pi' ? 'Pi' : 'OpenCode'} ·{' '}
+              {detail.info.model ? detail.info.model.id : binding.agent}
+            </span>
           </div>
         </div>
       </div>

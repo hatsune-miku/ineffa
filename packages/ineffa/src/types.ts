@@ -1,3 +1,5 @@
+import type { Backend } from './engine'
+
 export type DeliveryMode = 'queue' | 'steer'
 export type Address = { id: string; title: string; kind: 'channel' | 'direct'; guildId?: string }
 export type Attachment = { uri: string; name?: string; mime?: string }
@@ -31,7 +33,7 @@ export type OutgoingMessage = {
 export type AdapterStatus = { state: 'connecting' | 'connected' | 'disconnected' | 'error'; error?: string }
 /** The account's own identity and role, independent of the Ineffa runtime and messaging platform. */
 export type AgentPrompt = { identity: string; task: string }
-export type AccountProfile = { name?: string; agentPrompt?: AgentPrompt; model?: string }
+export type AccountProfile = { name?: string; agentPrompt?: AgentPrompt; model?: string; backend?: Backend }
 export type AdapterContext = {
   receive: (message: IncomingMessage) => Promise<void>
   status: (status: AdapterStatus) => void
@@ -49,6 +51,7 @@ export interface Adapter {
   /** Platform-specific output constraints, supplied by the adapter. */
   readonly promptInstructions?: string
   readonly model?: string
+  readonly backend?: Backend
   readonly capabilities: { edit: boolean; attachments: boolean; history: boolean }
   start(context: AdapterContext): Promise<void>
   stop(): Promise<void>
@@ -66,6 +69,8 @@ export interface Adapter {
 }
 export type Binding = {
   id: string
+  backend: Backend
+  model?: string
   adapterId: string
   address: Address
   agent: string

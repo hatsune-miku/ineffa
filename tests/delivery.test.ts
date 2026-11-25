@@ -60,7 +60,12 @@ describe('confirmed public delivery', () => {
     try {
       const binding = store.ensure('A', human('a', '').address, 'build', directory)
       const old = store.prepareOutput(binding.id, 'old', null, 'OLD_BODY')
-      store.db.exec('ALTER TABLE outbound DROP COLUMN notes; PRAGMA user_version=7;')
+      store.db.exec(`
+        ALTER TABLE outbound DROP COLUMN notes;
+        ALTER TABLE bindings DROP COLUMN backend;
+        ALTER TABLE bindings DROP COLUMN model;
+        PRAGMA user_version=7;
+      `)
       store.close()
       store = new Store(path)
       expect(store.output(old.id)?.text).toBe('OLD_BODY')

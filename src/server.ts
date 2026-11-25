@@ -1,10 +1,9 @@
-import { Host, IneffaError, errorMessage, identity, modelReference, sourceInputId } from 'ineffa'
-import { kook } from 'ineffa-kook'
+import { type Backend, Host, IneffaError, errorMessage, identity, modelReference, sourceInputId } from 'ineffa'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { AccountsConfig, validateAccount } from './config'
+import { AccountsConfig, accountAdapter, validateAccount } from './config'
 import { ConfigTransfer } from './config-transfer'
 import { OpenCodeSettings } from './opencode-settings'
 import { ProviderSettings } from './providers'
@@ -81,7 +80,7 @@ export function createServer(host: Host, options: ServerOptions) {
     }
     for (const binding of host.store.bindings()) {
       if (!binding.engineReady) continue
-      const session = await host.engine.native.sessions.get({ sessionID: binding.sessionId })
+      const session = await host.engineFor(binding).getSession(binding.sessionId)
       if (session.model && matches(`${session.model.providerID}/${session.model.id}`)) {
         throw new IneffaError(
           'model_in_use',
@@ -91,13 +90,22 @@ export function createServer(host: Host, options: ServerOptions) {
       }
     }
   }
-  async function validateAccountModel(directory: string, value?: string) {
+  async function validateAccountModel(directory: string, value?: string, backend: Backend = 'opencode') {
+    if (backend === 'pi') {
+      await providers.resolvePiModel(value)
+      return
+    }
     const model = modelReference(value)
     if (!model) return
     await host.engine.ready(directory)
     const models = await host.engine.native.model.list({ location: { directory } })
     if (!models.data.some((item) => item.providerID === model.providerID && item.id === model.id))
       throw new IneffaError('invalid_model', '此模型在账号工作目录中不可用，请先配置模型提供方。')
+  }
+  function requestedBackend(value: unknown): Backend {
+    if (value === undefined || value === 'opencode') return 'opencode'
+    if (value === 'pi' && host.engines.has('pi')) return 'pi'
+    throw new IneffaError('invalid_backend', '此后端不可用。')
   }
   function authenticate(request: Request) {
     if (!options.token) return true
@@ -282,7 +290,10 @@ export function createServer(host: Host, options: ServerOptions) {
           })
         }
         if (path === '/api/sessions' && request.method === 'GET') {
-          const active = await host.engine.native.sessions.active()
+          const active = Object.assign(
+            {},
+            ...(await Promise.all([...host.engines.values()].map((engine) => engine.active())))
+          )
           return Response.json({
             sessions: host.store.bindings(url.searchParams.get('archived') === 'true').map((binding) => ({
               ...binding,
@@ -294,29 +305,23 @@ export function createServer(host: Host, options: ServerOptions) {
         if (path === '/api/sessions' && request.method === 'POST') {
           const data = await body(request)
           const name = text(data.title, '会话名称', 120)
+          const backend = requestedBackend(data.backend)
           const agent = typeof data.agent === 'string' ? data.agent : 'build'
-          await host.engine.ready(options.directory)
-          const available = await host.engine.native.agent.list({ location: { directory: options.directory } })
-          if (!available.data.some((item) => item.id === agent))
-            throw new IneffaError('agent_not_found', '所选 Agent 不存在。')
-          if (data.model) {
-            const models = await host.engine.native.model.list({ location: { directory: options.directory } })
-            if (!models.data.some((m) => `${m.providerID}/${m.id}` === data.model))
-              throw new IneffaError('invalid_model', '所选模型当前不可用，请检查提供方连接。')
+          if (backend === 'opencode') {
+            await host.engine.ready(options.directory)
+            const available = await host.engine.native.agent.list({ location: { directory: options.directory } })
+            if (!available.data.some((item) => item.id === agent))
+              throw new IneffaError('agent_not_found', '所选 Agent 不存在。')
           }
+          const model = typeof data.model === 'string' ? data.model : undefined
+          await validateAccountModel(options.directory, model, backend)
           const binding = await host.createConversation(
             'web',
             { id: `web:${crypto.randomUUID()}`, title: name, kind: 'direct' },
-            agent
+            agent,
+            backend,
+            model
           )
-          if (typeof data.model === 'string' && data.model) {
-            const slash = data.model.indexOf('/')
-            if (slash < 1) throw new IneffaError('invalid_model', '模型标识必须是 provider/model。')
-            await host.engine.native.sessions.switchModel({
-              sessionID: binding.sessionId,
-              model: { providerID: data.model.slice(0, slash), id: data.model.slice(slash + 1) },
-            })
-          }
           return Response.json(binding, { status: 201 })
         }
         const match = /^\/api\/sessions\/([^/]+)(?:\/(.*))?$/.exec(path)
@@ -324,8 +329,9 @@ export function createServer(host: Host, options: ServerOptions) {
           const binding = host.store.binding(match[1]!)
           const action = match[2] ?? ''
           const sessionID = binding.sessionId
+          const engine = host.engineFor(binding)
           if (action === 'export' && request.method === 'GET') {
-            return Response.json(await host.engine.native.sessions.export({ sessionID }), {
+            return Response.json(await engine.exportSession(sessionID), {
               headers: {
                 'Cache-Control': 'no-store',
                 'Content-Disposition': `attachment; filename="${binding.id}.json"`,
@@ -334,12 +340,12 @@ export function createServer(host: Host, options: ServerOptions) {
           }
           if (action === '' && request.method === 'GET') {
             const [info, page, pending, permissions, forms, active] = await Promise.all([
-              host.engine.native.sessions.get({ sessionID }),
-              host.engine.messages(sessionID, url.searchParams.get('cursor') ?? undefined),
-              host.engine.pending(sessionID),
-              host.engine.native.permission.list({ sessionID }),
-              host.engine.native.form.list({ sessionID }),
-              host.engine.native.sessions.active(),
+              engine.getSession(sessionID),
+              engine.messages(sessionID, url.searchParams.get('cursor') ?? undefined),
+              engine.pending(sessionID),
+              engine.capabilities.permissions ? host.engine.native.permission.list({ sessionID }) : [],
+              engine.listForms(sessionID),
+              engine.active(),
             ])
             const rows = page.data
               .map((message) =>
@@ -376,7 +382,11 @@ export function createServer(host: Host, options: ServerOptions) {
             }
             return Response.json({
               binding,
-              accountModel: host.adapters.get(binding.adapterId)?.model,
+              accountModel:
+                (host.adapters.get(binding.adapterId)?.backend ?? 'opencode') === binding.backend
+                  ? host.adapters.get(binding.adapterId)?.model
+                  : undefined,
+              capabilities: engine.capabilities,
               info: {
                 agent: info.agent,
                 model: info.model,
@@ -437,9 +447,11 @@ export function createServer(host: Host, options: ServerOptions) {
             }
             if (action === 'reset') return Response.json(await host.reset(binding.id))
             if (action === 'compact') {
-              if ((await host.engine.native.sessions.active())[sessionID])
+              if (!engine.capabilities.compact)
+                throw new IneffaError('unsupported_operation', '此后端暂不支持手动压缩。')
+              if ((await engine.active())[sessionID])
                 throw new IneffaError('session_busy', '请等待当前输出完成后压缩上下文。', 409)
-              const result = await host.engine.native.sessions.compact({ sessionID })
+              const result = await engine.compactSession(sessionID)
               host.emit({ type: 'change', bindingId: binding.id })
               return Response.json(result, { status: 202 })
             }
@@ -450,6 +462,8 @@ export function createServer(host: Host, options: ServerOptions) {
               return Response.json({ ok: true })
             }
             if (action === 'rules') {
+              if (!engine.capabilities.permissions)
+                throw new IneffaError('unsupported_operation', '此后端不支持会话权限规则。')
               const rules = data.permissions
               if (
                 !Array.isArray(rules) ||
@@ -470,6 +484,8 @@ export function createServer(host: Host, options: ServerOptions) {
               return Response.json({ ok: true })
             }
             if (action === 'agent') {
+              if (!engine.capabilities.agents)
+                throw new IneffaError('unsupported_operation', '此后端不支持切换 Agent。')
               const agent = text(data.agent, 'Agent', 100)
               const agents = await host.engine.native.agent.list({ location: { directory: binding.directory } })
               if (!agents.data.some((item) => item.id === agent && !item.hidden && item.mode !== 'subagent'))
@@ -483,26 +499,24 @@ export function createServer(host: Host, options: ServerOptions) {
             }
             if (action === 'rename') {
               const title = text(data.title, '会话名称', 120)
-              await host.engine.native.sessions.rename({ sessionID, title })
+              await engine.renameSession(sessionID, title)
               host.store.rename(binding.id, title)
               host.emit({ type: 'change' })
               return Response.json({ ok: true })
             }
             if (action === 'model') {
-              if (host.adapters.get(binding.adapterId)?.model)
+              if (
+                host.adapters.get(binding.adapterId)?.model &&
+                (host.adapters.get(binding.adapterId)?.backend ?? 'opencode') === binding.backend
+              )
                 throw new IneffaError(
                   'account_model_bound',
                   '此会话使用账号绑定的模型，请在账号设置中修改或解除绑定。',
                   409
                 )
               const model = text(data.model, '模型')
-              const models = await host.engine.native.model.list({ location: { directory: binding.directory } })
-              const selected = models.data.find((m) => `${m.providerID}/${m.id}` === model)
-              if (!selected) throw new IneffaError('invalid_model', '所选模型当前不可用。')
-              await host.engine.native.sessions.switchModel({
-                sessionID,
-                model: { providerID: selected.providerID, id: selected.id },
-              })
+              await validateAccountModel(binding.directory, model, binding.backend)
+              await engine.switchModel(sessionID, modelReference(model)!)
               host.emit({ type: 'change', bindingId: binding.id })
               return Response.json({ ok: true })
             }
@@ -517,13 +531,15 @@ export function createServer(host: Host, options: ServerOptions) {
             if (action === 'queue/cancel' || action === 'queue/steer') {
               const inboxID = text(data.id, '输入 ID', 128)
               if (action.endsWith('cancel')) {
-                await host.engine.native.sessions.inbox.cancel({ sessionID, inboxID })
+                await engine.cancelPending(sessionID, inboxID)
                 if (host.store.inbound(inboxID)) host.store.inboundState(inboxID, 'cancelled')
-              } else await host.engine.native.sessions.inbox.steer({ sessionID, inboxID })
+              } else await engine.steerPending(sessionID, inboxID)
               host.emit({ type: 'change', bindingId: binding.id })
               return Response.json({ ok: true })
             }
             if (action === 'permission') {
+              if (!engine.capabilities.permissions)
+                throw new IneffaError('unsupported_operation', '此后端不支持交互式权限请求。')
               if (!['once', 'always', 'reject'].includes(String(data.reply)))
                 throw new IneffaError('invalid_reply', '权限回复无效。')
               await host.engine.native.permission.reply({
@@ -536,15 +552,15 @@ export function createServer(host: Host, options: ServerOptions) {
             }
             if (action === 'form') {
               const formID = text(data.id, '表单 ID')
-              if (data.cancel) await host.engine.native.form.cancel({ sessionID, formID })
+              if (data.cancel) await engine.cancelForm(sessionID, formID)
               else {
                 if (!data.answer || typeof data.answer !== 'object' || Array.isArray(data.answer))
                   throw new IneffaError('invalid_answer', '表单回复格式不正确。')
-                await host.engine.native.form.reply({
+                await engine.replyForm(
                   sessionID,
                   formID,
-                  answer: data.answer as Record<string, string | number | boolean | string[]>,
-                })
+                  data.answer as Record<string, string | number | boolean | string[]>
+                )
               }
               host.emit({ type: 'change', bindingId: binding.id })
               return Response.json({ ok: true })
@@ -552,6 +568,15 @@ export function createServer(host: Host, options: ServerOptions) {
           }
         }
         if (path === '/api/catalog') {
+          const backend = requestedBackend(url.searchParams.get('backend') ?? undefined)
+          if (backend === 'pi') {
+            return Response.json({
+              providers: await providers.list(),
+              agents: [{ id: 'build', name: '默认' }],
+              models: await providers.piModels(),
+              integrations: [],
+            })
+          }
           const directory = url.searchParams.get('directory')
           const location = { directory: directory ? resolve(text(directory, '工作目录')) : options.directory }
           await host.engine.ready(location.directory)
@@ -630,16 +655,20 @@ export function createServer(host: Host, options: ServerOptions) {
               name: adapter.name,
               platform: adapter.platform,
               agent: adapter.agent,
+              backend: adapter.backend ?? 'opencode',
               model: adapter.model,
               directory: adapter.directory,
               identity: adapter.identity,
               agentPrompt: adapter.agentPrompt,
               capabilities: adapter.capabilities,
               editable: Boolean(options.accounts.get(adapter.id)),
+              appId: options.accounts.get(adapter.id)?.appId,
+              domain: options.accounts.get(adapter.id)?.domain,
               access: options.accounts.get(adapter.id)
                 ? {
                     guilds: options.accounts.get(adapter.id)!.guilds,
                     channels: options.accounts.get(adapter.id)!.channels,
+                    chats: options.accounts.get(adapter.id)!.chats,
                     users: options.accounts.get(adapter.id)!.users,
                   }
                 : undefined,
@@ -649,9 +678,10 @@ export function createServer(host: Host, options: ServerOptions) {
         if (path === '/api/adapters' && request.method === 'POST') {
           const config = validateAccount(await body(request))
           if (host.adapters.has(config.id)) throw new IneffaError('duplicate_adapter', '账号 ID 已存在。', 409)
-          await validateAccountModel(config.directory, config.model)
+          requestedBackend(config.backend)
+          await validateAccountModel(config.directory, config.model, config.backend)
           await options.accounts.add(config)
-          await host.addAdapter(kook(config))
+          await host.addAdapter(accountAdapter(config))
           return Response.json({ id: config.id, status: host.statuses.get(config.id) }, { status: 201 })
         }
         const reconnect = /^\/api\/adapters\/([^/]+)\/reconnect$/.exec(path)
@@ -665,23 +695,35 @@ export function createServer(host: Host, options: ServerOptions) {
           const previous = options.accounts.get(accountEdit[1]!)
           if (!previous) throw new IneffaError('account_readonly', '此账号由配置文件管理，请在配置文件中修改。', 409)
           const data = await body(request)
+          if (data.platform !== undefined && data.platform !== (previous.platform ?? 'kook'))
+            throw new IneffaError('platform_immutable', '请新增账号以使用另一平台。')
           const config = validateAccount({
             ...previous,
             ...data,
             id: previous.id,
             token: typeof data.token === 'string' && data.token.trim() ? data.token : previous.token,
+            appSecret:
+              typeof data.appSecret === 'string' && data.appSecret.trim() ? data.appSecret : previous.appSecret,
           })
-          await validateAccountModel(config.directory, config.model)
+          requestedBackend(config.backend)
+          await validateAccountModel(config.directory, config.model, config.backend)
+          if (
+            previous.platform === 'lark' &&
+            config.platform === 'lark' &&
+            (previous.appId !== config.appId || previous.domain !== config.domain)
+          )
+            throw new IneffaError('identity_immutable', '请新增账号以使用另一应用或区域。')
           if (
             host.store.bindings().some((b) => b.adapterId === previous.id) &&
-            (config.agent !== previous.agent || config.directory !== previous.directory)
+            (config.directory !== previous.directory ||
+              (config.backend === previous.backend && config.agent !== previous.agent))
           )
             throw new IneffaError('account_in_use', '此账号还有活跃会话。请先归档，再更改 Agent 或工作目录。', 409)
           await options.accounts.update(config)
           const adapter = host.adapters.get(previous.id)
-          const connectionChanged = (['token', 'agent', 'directory', 'guilds', 'channels', 'users'] as const).some(
-            (key) => JSON.stringify(previous[key]) !== JSON.stringify(config[key])
-          )
+          const connectionChanged = (
+            ['token', 'appSecret', 'agent', 'directory', 'guilds', 'channels', 'chats', 'users'] as const
+          ).some((key) => JSON.stringify(previous[key]) !== JSON.stringify(config[key]))
           if (adapter?.updateProfile && !connectionChanged) {
             adapter.updateProfile(config)
             await host.syncAccountModel(adapter.id)
@@ -690,7 +732,7 @@ export function createServer(host: Host, options: ServerOptions) {
           }
           await host.delivery.flush()
           await host.removeAdapter(previous.id)
-          await host.addAdapter(kook(config))
+          await host.addAdapter(accountAdapter(config))
           await host.syncAccountModel(config.id)
           return Response.json({ id: config.id, status: host.statuses.get(config.id) })
         }

@@ -3,6 +3,8 @@ import {
   type AdapterContext,
   type Address,
   type AgentPrompt,
+  type Backend,
+  type Engine,
   Host,
   type IncomingMessage,
   OpenCodeBridge,
@@ -25,6 +27,7 @@ export class TestAdapter implements Adapter {
   platformId: string
   agentPrompt?: AgentPrompt
   model?: string
+  backend?: Backend
   platform = 'test'
   agent = 'build'
   capabilities = { edit: true, attachments: false, history: false }
@@ -88,7 +91,8 @@ export async function fixture(
   commands: Record<string, { template: string; description?: string }> = {},
   streamDelay = 0,
   filewatcher = false,
-  browser = false
+  browser = false,
+  extraEngines: Engine[] = []
 ) {
   const root = resolve(process.env.INEFFA_TEST_DIR ?? 'test-results/runtime')
   await mkdir(root, { recursive: true })
@@ -205,7 +209,7 @@ export async function fixture(
   const engine = await OpenCodeBridge.open(join(directory, 'engine'), config)
   await engine.ready(workspace)
   const store = new Store(join(directory, 'ineffa.sqlite'))
-  const host = new Host(store, engine)
+  const host = new Host(store, engine, {}, extraEngines)
   await host.start()
   return {
     directory,

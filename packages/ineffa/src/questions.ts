@@ -1,8 +1,8 @@
-import type { OpenCodeBridge } from './opencode'
+import type { Engine, EngineForm } from './engine'
 import { Store, identity } from './store'
 import type { Adapter, Binding, IncomingMessage } from './types'
 
-type Form = Awaited<ReturnType<OpenCodeBridge['native']['form']['get']>>
+type Form = EngineForm
 type Answer = Record<string, string | string[]>
 type Question = {
   id: string
@@ -21,7 +21,7 @@ export class Questions {
 
   constructor(
     private store: Store,
-    private engine: OpenCodeBridge,
+    private engineFor: (binding: Binding) => Engine,
     private adapter: (id: string) => Adapter,
     private enqueue: (id: string) => Promise<void>
   ) {}
@@ -49,7 +49,7 @@ export class Questions {
 
   async recover(binding: Binding) {
     if (binding.archivedAt) return
-    const forms = await this.engine.native.form.list({ sessionID: binding.sessionId })
+    const forms = await this.engineFor(binding).listForms(binding.sessionId)
     const ids = new Set(forms.map((form) => form.id))
     const rows = this.store.db
       .query("SELECT id FROM platform_questions WHERE bindingId=? AND state<>'closed'")
@@ -71,10 +71,16 @@ export class Questions {
       if (!question) {
         const tool = form.metadata?.tool
         const messageId =
-          tool && typeof tool === 'object' && !Array.isArray(tool) && typeof tool.messageID === 'string'
+          tool &&
+          typeof tool === 'object' &&
+          !Array.isArray(tool) &&
+          'messageID' in tool &&
+          typeof tool.messageID === 'string'
             ? tool.messageID
             : undefined
-        const inputId = messageId ? await this.engine.inputForAssistant(binding.sessionId, messageId) : binding.inputId
+        const inputId = messageId
+          ? await this.engineFor(binding).inputForAssistant(binding.sessionId, messageId)
+          : binding.inputId
         const input = inputId ? this.store.inbound(inputId) : undefined
         const root = input ? this.store.inbound(input.rootId) : undefined
         if (
@@ -293,13 +299,14 @@ export class Questions {
 
   private async state(question: Question) {
     const binding = this.store.binding(question.bindingId)
-    const props = { sessionID: binding.sessionId, formID: question.id }
-    return this.engine.native.form.state(props).catch((error) => {
-      if ((error as { _tag?: string })._tag !== 'FormNotFoundError') throw error
-      this.closed(question.id)
-      this.notice(binding, `question-expired:${question.id}`, '先前的问题已失效，请重新 @ 我继续。')
-      return undefined
-    })
+    return this.engineFor(binding)
+      .getFormState(binding.sessionId, question.id)
+      .catch((error) => {
+        if ((error as { _tag?: string })._tag !== 'FormNotFoundError') throw error
+        this.closed(question.id)
+        this.notice(binding, `question-expired:${question.id}`, '先前的问题已失效，请重新 @ 我继续。')
+        return undefined
+      })
   }
 
   private async finish(question: Question) {
@@ -313,7 +320,7 @@ export class Questions {
     if (!state) return
     if (state.status === 'pending') {
       try {
-        await this.engine.native.form.reply({ ...props, answer: question.answer })
+        await this.engineFor(binding).replyForm(binding.sessionId, question.id, question.answer)
       } catch (error) {
         if ((await this.state(question))?.status === 'pending') throw error
       }

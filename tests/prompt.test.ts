@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { TestAdapter, fixture, human, modelAccount, systemText, until } from './fixture'
 
 import { expandPrompt } from '../packages/ineffa/src/prompt'
-import { AccountsConfig, validateAccount } from '../src/config'
+import { AccountsConfig, accountAdapter, validateAccount } from '../src/config'
 
 test('account prompts persist as templates, validate text, and expand only documented macros once', async () => {
   const adapter = new TestAdapter('local-account', '.')
@@ -38,7 +38,7 @@ test('account prompts persist as templates, validate text, and expand only docum
     await accounts.add(config)
     const restored = await new AccountsConfig(path).load()
     expect(restored[0]?.agentPrompt).toEqual(profile)
-    expect(kook(restored[0]!).agentPrompt).toEqual(profile)
+    expect(accountAdapter(restored[0]!).agentPrompt).toEqual(profile)
     await accounts.update(validateAccount({ ...config, agentPrompt: { identity: '', task: '' } }))
     expect((await new AccountsConfig(path).load())[0]?.agentPrompt).toBeUndefined()
   } finally {

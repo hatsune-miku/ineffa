@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import type { Backend } from 'ineffa'
+
 import { Alert, Button, ComboBox, Dialog, Field, TextArea, TextBox } from '@a1knla/cakeui'
 
 import { type Account, type Catalog, api } from '../../../../../api'
@@ -18,6 +20,8 @@ export function AccountDialog({
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [platform, setPlatform] = useState(account && account.platform !== 'kook' ? 'lark' : 'kook')
+  const [backend, setBackend] = useState<Backend>(account?.backend ?? 'opencode')
   const [directory, setDirectory] = useState(account?.directory ?? 'workspace')
   const [model, setModel] = useState(account?.model ?? '')
   const [localCatalog, setLocalCatalog] = useState<Catalog | null>(null)
@@ -29,7 +33,11 @@ export function AccountDialog({
     setLocalCatalog(null)
     setModelError('')
     const timer = setTimeout(() => {
-      api<Catalog>(`/catalog?directory=${encodeURIComponent(directory)}`, undefined, controller.signal)
+      api<Catalog>(
+        `/catalog?directory=${encodeURIComponent(directory)}&backend=${backend}`,
+        undefined,
+        controller.signal
+      )
         .then(setLocalCatalog)
         .catch((error) => {
           if (!controller.signal.aborted) setModelError(messageOf(error))
@@ -42,7 +50,7 @@ export function AccountDialog({
       clearTimeout(timer)
       controller.abort()
     }
-  }, [directory])
+  }, [directory, backend])
   const models = localCatalog?.models ?? []
   return (
     <Dialog
@@ -50,7 +58,7 @@ export function AccountDialog({
       onOpenChange={(v) => {
         if (!v && !busy) close()
       }}
-      title={account ? '编辑 KOOK 账号' : '添加 KOOK 账号'}
+      title={account ? '编辑账号' : '添加账号'}
       closeLabel="关闭"
       footer={
         <>
@@ -81,13 +89,19 @@ export function AccountDialog({
               account ? `/adapters/${account.id}/update` : '/adapters',
               {
                 id: data.get('id'),
+                platform,
+                backend,
                 name: data.get('name'),
                 token: data.get('token'),
+                appId: data.get('appId'),
+                appSecret: data.get('appSecret'),
+                domain: data.get('domain') ?? undefined,
                 directory: data.get('directory'),
                 agent: data.get('agent'),
                 model,
                 guilds: ids('guilds'),
                 channels: ids('channels'),
+                chats: ids('chats'),
                 users: ids('users'),
                 agentPrompt: {
                   identity: data.get('identityPrompt'),
@@ -103,6 +117,34 @@ export function AccountDialog({
           }
         }}
       >
+        <div className="form-grid">
+          <Field label="平台" htmlFor="account-platform">
+            <ComboBox
+              className="form-control"
+              id="account-platform"
+              value={platform}
+              disabled={Boolean(account)}
+              onChange={(event) => setPlatform(event.target.value)}
+            >
+              <option value="kook">KOOK</option>
+              <option value="lark">飞书 / Lark</option>
+            </ComboBox>
+          </Field>
+          <Field label="后端" htmlFor="account-backend" description="新会话生效。">
+            <ComboBox
+              className="form-control"
+              id="account-backend"
+              value={backend}
+              onChange={(event) => {
+                setBackend(event.target.value as Backend)
+                setModel('')
+              }}
+            >
+              <option value="opencode">OpenCode</option>
+              <option value="pi">Pi</option>
+            </ComboBox>
+          </Field>
+        </div>
         <div className="form-grid">
           <Field label="账号 ID" htmlFor="account-id">
             <TextBox
@@ -126,18 +168,59 @@ export function AccountDialog({
             />
           </Field>
         </div>
-        <Field label="Bot Token" htmlFor="account-token">
-          <TextBox
-            className="form-control"
-            id="account-token"
-            name="token"
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            required={!account}
-            placeholder={account ? '留空保留当前 Token' : ''}
-          />
-        </Field>
+        {platform === 'kook' ? (
+          <Field label="Bot Token" htmlFor="account-token">
+            <TextBox
+              className="form-control"
+              id="account-token"
+              name="token"
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              required={!account}
+              placeholder={account ? '留空保留当前 Token' : ''}
+            />
+          </Field>
+        ) : (
+          <>
+            <Field label="区域" htmlFor="account-domain">
+              <ComboBox
+                className="form-control"
+                id="account-domain"
+                name="domain"
+                defaultValue={account?.domain ?? 'feishu'}
+                disabled={Boolean(account)}
+              >
+                <option value="feishu">飞书</option>
+                <option value="lark">Lark</option>
+              </ComboBox>
+              {account && <input type="hidden" name="domain" value={account.domain ?? 'feishu'} />}
+            </Field>
+            <Field label="App ID" htmlFor="account-app-id">
+              <TextBox
+                className="form-control"
+                id="account-app-id"
+                name="appId"
+                required
+                defaultValue={account?.appId}
+                readOnly={Boolean(account)}
+                placeholder="cli_…"
+              />
+            </Field>
+            <Field label="App Secret" htmlFor="account-app-secret">
+              <TextBox
+                className="form-control"
+                id="account-app-secret"
+                name="appSecret"
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                required={!account}
+                placeholder={account ? '留空保留当前 Secret' : ''}
+              />
+            </Field>
+          </>
+        )}
         <div className="form-grid">
           <Field label="Agent" htmlFor="account-agent">
             <ComboBox className="form-control" id="account-agent" name="agent" defaultValue={account?.agent ?? 'build'}>
@@ -159,11 +242,7 @@ export function AccountDialog({
             />
           </Field>
         </div>
-        <Field
-          label="绑定模型"
-          htmlFor="account-model"
-          description="保存后同步已有未归档会话，不打断当前生成。解除绑定保留已有模型，新会话使用默认设置。"
-        >
+        <Field label="绑定模型" htmlFor="account-model" description="同步同一后端的未归档会话，不打断当前生成。">
           <ComboBox
             className="form-control"
             id="account-model"
@@ -173,8 +252,11 @@ export function AccountDialog({
             searchable
             searchPlaceholder="搜索模型或提供方…"
             disabled={loadingModels}
+            required={backend === 'pi'}
           >
-            <option value="">{loadingModels ? '加载模型…' : '未绑定（使用默认设置）'}</option>
+            <option value="">
+              {loadingModels ? '加载模型…' : backend === 'pi' ? '选择 OpenAI 兼容模型' : '未绑定（使用默认设置）'}
+            </option>
             {model && !models.some((item) => item.id === model) && (
               <option value={model}>
                 {model}（{loadingModels ? '加载中' : '当前不可用'}）
@@ -218,34 +300,49 @@ export function AccountDialog({
             maxLength={16000}
           />
         </Field>
-        <Field
-          label="信任的服务器 ID（Guild ID）"
-          htmlFor="account-guilds"
-          description="允许服务器内 Bot 可访问的全部频道。用逗号或换行分隔。"
-        >
-          <TextArea
-            className="form-control"
-            id="account-guilds"
-            name="guilds"
-            defaultValue={account?.access?.guilds?.join('\n')}
-            rows={2}
-            placeholder="填写服务器数字 ID"
-          />
-        </Field>
-        <Field
-          label="允许的频道 ID"
-          htmlFor="account-channels"
-          description="额外允许的频道，用逗号或换行分隔。服务器和频道均留空时不接收群聊。"
-        >
-          <TextArea
-            className="form-control"
-            id="account-channels"
-            name="channels"
-            defaultValue={account?.access?.channels?.join('\n')}
-            rows={2}
-            placeholder="1234567890123456"
-          />
-        </Field>
+        {platform === 'kook' ? (
+          <>
+            <Field
+              label="信任的服务器 ID（Guild ID）"
+              htmlFor="account-guilds"
+              description="允许服务器内 Bot 可访问的全部频道。用逗号或换行分隔。"
+            >
+              <TextArea
+                className="form-control"
+                id="account-guilds"
+                name="guilds"
+                defaultValue={account?.access?.guilds?.join('\n')}
+                rows={2}
+                placeholder="填写服务器数字 ID"
+              />
+            </Field>
+            <Field
+              label="允许的频道 ID"
+              htmlFor="account-channels"
+              description="额外允许的频道，用逗号或换行分隔。服务器和频道均留空时不接收群聊。"
+            >
+              <TextArea
+                className="form-control"
+                id="account-channels"
+                name="channels"
+                defaultValue={account?.access?.channels?.join('\n')}
+                rows={2}
+                placeholder="1234567890123456"
+              />
+            </Field>
+          </>
+        ) : (
+          <Field label="允许的群聊 ID" htmlFor="account-chats">
+            <TextArea
+              className="form-control"
+              id="account-chats"
+              name="chats"
+              rows={2}
+              defaultValue={account?.access?.chats?.join('\n')}
+              placeholder="oc_…，用逗号或换行分隔"
+            />
+          </Field>
+        )}
         <Field label="允许私聊的用户 ID" htmlFor="account-users">
           <TextBox
             className="form-control"

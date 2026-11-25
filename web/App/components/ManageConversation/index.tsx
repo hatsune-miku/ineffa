@@ -26,11 +26,11 @@ export function ManageConversation({
   const [error, setError] = useState('')
   const [confirm, setConfirm] = useState('')
   const [notice, setNotice] = useState('')
-  const [localCatalog, setLocalCatalog] = useState(catalog)
+  const [localCatalog, setLocalCatalog] = useState(detail.binding.backend === 'pi' ? null : catalog)
   useEffect(() => {
     const controller = new AbortController()
     void api<Catalog>(
-      `/catalog?directory=${encodeURIComponent(detail.binding.directory)}`,
+      `/catalog?directory=${encodeURIComponent(detail.binding.directory)}&backend=${detail.binding.backend}`,
       undefined,
       controller.signal
     )
@@ -39,7 +39,7 @@ export function ManageConversation({
         if (!controller.signal.aborted) setError(messageOf(error))
       })
     return () => controller.abort()
-  }, [detail.binding.directory])
+  }, [detail.binding.directory, detail.binding.backend])
   async function action(name: string, data: object = {}) {
     setBusy(true)
     setError('')
@@ -121,50 +121,56 @@ export function ManageConversation({
             <dd className="fact-value">{detail.info.tokens.cache.read.toLocaleString()} tokens</dd>
           </div>
           <div className="fact-row">
-            <dt className="fact-label">OpenCode 会话</dt>
+            <dt className="fact-label">{detail.binding.backend === 'pi' ? 'Pi' : 'OpenCode'} 会话</dt>
             <dd className="fact-value">{detail.binding.sessionId}</dd>
           </div>
         </dl>
         {!detail.binding.archivedAt && (
           <>
-            <form
-              className="inline-form"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void action('agent', { agent: new FormData(event.currentTarget).get('agent') })
-              }}
-            >
-              <ComboBox
-                className="form-control"
-                name="agent"
-                aria-label="切换 Agent"
-                defaultValue={detail.info.agent ?? detail.binding.agent}
-                disabled={detail.running || busy}
+            {detail.capabilities.agents && (
+              <form
+                className="inline-form"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void action('agent', { agent: new FormData(event.currentTarget).get('agent') })
+                }}
               >
-                {localCatalog?.agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name || agent.id}
-                  </option>
-                ))}
-              </ComboBox>
-              <Button type="submit" disabled={detail.running || busy}>
-                切换 Agent
-              </Button>
-            </form>
+                <ComboBox
+                  className="form-control"
+                  name="agent"
+                  aria-label="切换 Agent"
+                  defaultValue={detail.info.agent ?? detail.binding.agent}
+                  disabled={detail.running || busy}
+                >
+                  {localCatalog?.agents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name || agent.id}
+                    </option>
+                  ))}
+                </ComboBox>
+                <Button type="submit" disabled={detail.running || busy}>
+                  切换 Agent
+                </Button>
+              </form>
+            )}
             <div className="button-row">
               <Button disabled={busy} onClick={() => void action('debug', { enabled: !detail.binding.debug })}>
                 {detail.binding.debug ? '关闭调试' : '开启调试'}
               </Button>
-              <Button disabled={busy || detail.running} onClick={() => void action('compact')}>
-                压缩上下文
-              </Button>
+              {detail.capabilities.compact && (
+                <Button disabled={busy || detail.running} onClick={() => void action('compact')}>
+                  压缩上下文
+                </Button>
+              )}
             </div>
-            <PermissionRules
-              key={JSON.stringify(detail.info.permissions)}
-              initial={detail.info.permissions}
-              busy={busy}
-              save={(permissions) => action('rules', { permissions })}
-            />
+            {detail.capabilities.permissions && (
+              <PermissionRules
+                key={JSON.stringify(detail.info.permissions)}
+                initial={detail.info.permissions}
+                busy={busy}
+                save={(permissions) => action('rules', { permissions })}
+              />
+            )}
           </>
         )}
         <a className="link" href={`/api/sessions/${detail.binding.id}/export`} download>

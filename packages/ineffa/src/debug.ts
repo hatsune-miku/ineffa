@@ -1,7 +1,7 @@
 import { Plugin } from '@opencode/plugin'
-import type { OpenCodeEvent } from '@opencode/sdk'
 
 import { observeFirstSse } from './debug-stream'
+import type { EngineEvent } from './engine'
 import { isDirectoryTool } from './tool-directory'
 
 type RequestTiming = {
@@ -100,7 +100,7 @@ export class DebugTimings {
     },
   })
 
-  usage(event: Extract<OpenCodeEvent, { type: 'session.step.ended' | 'session.step.failed' }>) {
+  usage(event: Extract<EngineEvent, { type: 'session.step.ended' | 'session.step.failed' }>) {
     const trace = this.traces.get(event.data.sessionID)
     const tokens = event.data.tokens
     if (!trace || !tokens) return

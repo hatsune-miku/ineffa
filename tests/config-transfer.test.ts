@@ -49,9 +49,9 @@ test('plaintext archive merges providers, credentials and accounts across restar
     expect(exported).not.toHaveProperty('sessions')
 
     const incoming = structuredClone(exported)
-    incoming.accounts = [
-      { ...incoming.accounts[0]!, name: 'Imported', token: 'imported-bot-token', model: 'local/new' },
-    ]
+    const originalAccount = incoming.accounts[0]!
+    if (originalAccount.platform === 'lark') throw new Error('Expected KOOK fixture account')
+    incoming.accounts = [{ ...originalAccount, name: 'Imported', token: 'imported-bot-token', model: 'local/new' }]
     incoming.accounts.push({ ...incoming.accounts[0]!, id: 'B', directory: 'C:\\source\\workspace' })
     incoming.opencode = {
       providers: {

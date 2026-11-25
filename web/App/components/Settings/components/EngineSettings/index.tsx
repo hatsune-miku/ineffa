@@ -84,6 +84,7 @@ export function EngineSettings({
   return (
     <section>
       <div className="engine-toolbar">
+        <Badge>OpenCode</Badge>
         <ComboBox
           className="engine-directory"
           disabled={busy}

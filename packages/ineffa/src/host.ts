@@ -3,10 +3,11 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { slashCommand } from './commands'
 import { Delivery } from './delivery'
+import { type Backend, type Engine, sourceInputId } from './engine'
 import { snapshotFile } from './files'
 import { conversationContext, messageContext } from './message-context'
 import { modelReference } from './model'
-import { type OpenCodeBridge, sourceInputId } from './opencode'
+import type { OpenCodeBridge } from './opencode'
 import { Presentation } from './presentation'
 import { accountPrompt } from './prompt'
 import { Questions } from './questions'
@@ -25,6 +26,7 @@ import {
 } from './types'
 
 export class Host {
+  readonly engines = new Map<Backend, Engine>()
   readonly adapters = new Map<string, Adapter>()
   readonly statuses = new Map<string, AdapterStatus>()
   readonly delivery: Delivery
@@ -35,18 +37,24 @@ export class Host {
   private submissions = new Map<string, Promise<unknown>>()
   private watchers = new Map<string, { controller: AbortController; promise: Promise<void> }>()
   private controller = new AbortController()
-  private stream?: Promise<void>
+  private streams: Promise<void>[] = []
   private readonly promptsReady: Promise<void>
   readonly limits: { maxPending: number }
   constructor(
     readonly store: Store,
     readonly engine: OpenCodeBridge,
-    limits: Partial<{ maxPending: number }> = {}
+    limits: Partial<{ maxPending: number }> = {},
+    extraEngines: Engine[] = []
   ) {
     this.limits = { maxPending: limits.maxPending ?? 128 }
-    engine.debug.enabled = (sessionId) => {
-      const binding = store.bySession(sessionId)
-      return Boolean(binding?.debug && !binding.archivedAt)
+    for (const runtime of [engine, ...extraEngines]) {
+      if (this.engines.has(runtime.backend))
+        throw new IneffaError('duplicate_backend', `后端 ${runtime.backend} 重复注册。`)
+      this.engines.set(runtime.backend, runtime)
+      runtime.debug.enabled = (sessionId) => {
+        const binding = store.bySession(sessionId)
+        return Boolean(binding?.debug && !binding.archivedAt && binding.backend === runtime.backend)
+      }
     }
     if (Object.values(this.limits).some((value) => !Number.isSafeInteger(value) || value < 1))
       throw new IneffaError('invalid_limits', '排队上限必须是正整数。')
@@ -59,29 +67,40 @@ export class Host {
     this.presentation = new Presentation(this.delivery)
     this.questions = new Questions(
       store,
-      engine,
+      (binding) => this.engineFor(binding),
       (id) => this.adapter(id),
       (id) => this.delivery.enqueue(id)
     )
-    this.promptsReady = engine
-      .configureFileTool(
-        (sessionId) => {
-          const binding = this.store.bySession(sessionId)
-          return Boolean(
-            binding && !binding.archivedAt && this.adapters.get(binding.adapterId)?.capabilities.attachments
+    this.promptsReady = Promise.all(
+      [...this.engines.values()].map((engine) =>
+        engine
+          .configureFileTool(
+            (sessionId) => {
+              const binding = this.store.bySession(sessionId)
+              return Boolean(
+                binding && !binding.archivedAt && this.adapters.get(binding.adapterId)?.capabilities.attachments
+              )
+            },
+            (sessionId, messageId, callId, path, caption) => this.sendFile(sessionId, messageId, callId, path, caption)
           )
-        },
-        (sessionId, messageId, callId, path, caption) => this.sendFile(sessionId, messageId, callId, path, caption)
+          .then(() =>
+            engine.configureAccountPrompts((sessionId) => {
+              const binding = this.store.bySession(sessionId)
+              if (!binding || binding.archivedAt) return
+              const adapter = this.adapters.get(binding.adapterId)
+              if (!adapter || !this.ownsIdentity(adapter)) return
+              return accountPrompt(adapter, this.conversationPeers(adapter, binding.address))
+            })
+          )
       )
-      .then(() =>
-        engine.configureAccountPrompts((sessionId) => {
-          const binding = this.store.bySession(sessionId)
-          if (!binding || binding.archivedAt) return
-          const adapter = this.adapters.get(binding.adapterId)
-          if (!adapter || !this.ownsIdentity(adapter)) return
-          return accountPrompt(adapter, this.conversationPeers(adapter, binding.address))
-        })
-      )
+    ).then(() => {})
+  }
+  engineFor(binding: Binding | string): Engine {
+    const current = typeof binding === 'string' ? this.store.bySession(binding) : binding
+    if (!current) throw new IneffaError('conversation_not_found', '此会话不存在。', 404)
+    const engine = this.engines.get(current.backend)
+    if (!engine) throw new IneffaError('backend_unavailable', `后端 ${current.backend} 未加载。`, 503)
+    return engine
   }
   private async sendFile(sessionId: string, messageId: string, callId: string, path: string, caption: string) {
     const binding = this.store.bySession(sessionId)
@@ -94,7 +113,7 @@ export class Host {
     let output = this.store.output(identity('out_', binding.id, sourceId))
     if (!output) {
       const file = await snapshotFile(binding.directory, path, join(dirname(this.engine.databasePath), 'attachments'))
-      const inputId = await this.engine.inputForAssistant(sessionId, messageId)
+      const inputId = await this.engineFor(binding).inputForAssistant(sessionId, messageId)
       if (this.store.binding(binding.id).archivedAt) throw new Error('此会话已归档。')
       output = this.store.prepareOutput(binding.id, sourceId, inputId ?? null, caption, {
         kind: 'attachment',
@@ -160,6 +179,8 @@ export class Host {
   }
   async addAdapter(adapter: Adapter) {
     modelReference(adapter.model)
+    if (!this.engines.has(adapter.backend ?? 'opencode'))
+      throw new IneffaError('backend_unavailable', '所选后端未加载。')
     if (!/^[a-zA-Z0-9_-]+$/.test(adapter.id))
       throw new IneffaError('invalid_adapter_id', '账号 ID 只能包含英文字母、数字、下划线和连字符。')
     if (this.adapters.has(adapter.id)) throw new IneffaError('duplicate_adapter', `账号 ID ${adapter.id} 已存在。`, 409)
@@ -222,7 +243,7 @@ export class Host {
   }
   async start() {
     await this.promptsReady
-    this.stream = this.readLive()
+    this.streams = [...this.engines.values()].map((engine) => this.readLive(engine))
     for (const binding of this.store.bindings()) {
       if (!this.adapters.has(binding.adapterId)) continue
       try {
@@ -242,11 +263,13 @@ export class Host {
   }
   private async ensure(binding: Binding) {
     await this.promptsReady
-    const selected = this.adapters.get(binding.adapterId)?.model
-    const info = await this.engine.ensure(binding, selected)
+    const engine = this.engineFor(binding)
+    const adapter = this.adapters.get(binding.adapterId)
+    const selected = (adapter?.backend ?? 'opencode') === binding.backend ? adapter?.model : undefined
+    const info = await engine.ensure(binding, selected ?? (!binding.engineReady ? binding.model : undefined))
     const model = modelReference(selected)
     if (model && (info.model?.providerID !== model.providerID || info.model.id !== model.id))
-      await this.engine.native.sessions.switchModel({ sessionID: binding.sessionId, model })
+      await engine.switchModel(binding.sessionId, model)
     this.store.ready(binding.id)
     if (!this.watchers.has(binding.id)) {
       const controller = new AbortController()
@@ -256,10 +279,26 @@ export class Host {
       })
     }
   }
-  async createConversation(adapterId: string, address: Address, agent?: string): Promise<Binding> {
+  async createConversation(
+    adapterId: string,
+    address: Address,
+    agent?: string,
+    backend?: Backend,
+    model?: string
+  ): Promise<Binding> {
     const adapter = this.adapter(adapterId)
     if (!adapter.canAccess(address)) throw new IneffaError('conversation_forbidden', '当前账号不允许访问此会话。', 403)
-    const binding = this.store.ensure(adapterId, address, agent ?? adapter.agent, resolve(adapter.directory))
+    const selected = backend ?? adapter.backend ?? 'opencode'
+    if (!this.engines.has(selected)) throw new IneffaError('backend_unavailable', '所选后端未加载。')
+    modelReference(model)
+    const binding = this.store.ensure(
+      adapterId,
+      address,
+      agent ?? adapter.agent,
+      resolve(adapter.directory),
+      selected,
+      model ?? (selected === (adapter.backend ?? 'opencode') ? adapter.model : undefined)
+    )
     await this.ensure(binding)
     this.emit({ type: 'change', bindingId: binding.id })
     return this.store.binding(binding.id)
@@ -299,7 +338,14 @@ export class Host {
         Boolean(command && this.questions.expects(adapterId, message)))
     if (command && (!wake || message.author.bot)) return
     if (!message.text.trim() && !message.files?.length) return
-    let binding = this.store.ensure(adapterId, message.address, adapter.agent, resolve(adapter.directory))
+    let binding = this.store.ensure(
+      adapterId,
+      message.address,
+      adapter.agent,
+      resolve(adapter.directory),
+      adapter.backend ?? 'opencode',
+      adapter.model
+    )
     return this.serial(binding.id, async () => {
       const duplicate = this.store.inbound(id)
       if (duplicate) return duplicate
@@ -313,7 +359,14 @@ export class Host {
           return
       }
       // A reset queued ahead of this input may have replaced the binding.
-      binding = this.store.ensure(adapterId, message.address, adapter.agent, resolve(adapter.directory))
+      binding = this.store.ensure(
+        adapterId,
+        message.address,
+        adapter.agent,
+        resolve(adapter.directory),
+        adapter.backend ?? 'opencode',
+        adapter.model
+      )
       if (wake || !binding.engineReady) await this.ensure(this.store.binding(binding.id))
       if (command && !['new', 'abort', 'help', 'debug'].includes(command.name))
         throw new IneffaError('command_not_found', `不支持 /${command.name}，输入 /help 查看本地命令。`)
@@ -321,7 +374,11 @@ export class Host {
         throw new IneffaError('command_arguments', `/${command.name} 不接受参数或附件。`)
       if (command?.name === 'debug' && (!['on', 'off'].includes(command.arguments) || message.files?.length))
         throw new IneffaError('command_arguments', '用法：/debug on 或 /debug off。')
-      if (wake && !command && (await this.engine.pending(binding.sessionId)).length >= this.limits.maxPending)
+      if (
+        wake &&
+        !command &&
+        (await this.engineFor(binding).pending(binding.sessionId)).length >= this.limits.maxPending
+      )
         throw new IneffaError('inbox_full', `此会话已有 ${this.limits.maxPending} 条排队输入，请等待或清理队列。`, 429)
       const quote =
         message.quote &&
@@ -397,9 +454,11 @@ export class Host {
     try {
       await this.ensure(binding)
       if (input.command?.name === 'new') {
-        const previous = await this.engine.native.sessions.get({ sessionID: input.command.previousSessionId! })
-        if (previous.model && !this.adapters.get(binding.adapterId)?.model)
-          await this.engine.native.sessions.switchModel({ sessionID: binding.sessionId, model: previous.model })
+        const previousBinding = this.store.bySession(input.command.previousSessionId!)
+        if (previousBinding?.backend === binding.backend && !this.adapters.get(binding.adapterId)?.model) {
+          const previous = await this.engineFor(previousBinding).getSession(previousBinding.sessionId)
+          if (previous.model) await this.engineFor(binding).switchModel(binding.sessionId, previous.model)
+        }
         this.commandNotice(input, '已开启新会话，旧会话已归档。')
       } else if (input.command?.name === 'abort') {
         await this.stopBinding(binding.id)
@@ -407,7 +466,7 @@ export class Host {
       } else if (input.command?.name === 'debug') {
         const enabled = input.command.arguments === 'on'
         this.store.setDebug(binding.id, enabled)
-        if (!enabled) this.engine.debug.clear(binding.sessionId)
+        if (!enabled) this.engineFor(binding).debug.clear(binding.sessionId)
         this.commandNotice(input, enabled ? 'Debug on' : 'Debug off')
       } else if (input.command?.name === 'help') {
         this.commandNotice(
@@ -424,8 +483,10 @@ export class Host {
           throw new IneffaError('command_not_found', `不支持 /${input.command.name}。`)
         }
         const adapter = this.adapter(binding.adapterId)
+        if (input.message.mode === 'steer' && !this.engineFor(binding).capabilities.steer)
+          throw new IneffaError('unsupported_operation', '此后端暂不支持插入当前执行，请使用排队发送。')
         const files = [...this.store.contextFiles(input.id), ...(input.message.files ?? [])]
-        await this.engine.submit(
+        await this.engineFor(binding).submit(
           binding,
           input,
           adapter.prepareAttachments ? await adapter.prepareAttachments(files) : files
@@ -446,11 +507,12 @@ export class Host {
   }
   private async readSession(id: string, signal: AbortSignal) {
     let backoff = 250
-    // Rebuild transient counters from OpenCode's journal after a restart; never resend past replies.
+    // Rebuild transient counters from the backend journal; never resend past replies.
     let cursor = 0
+    const engine = this.engineFor(this.store.binding(id))
     while (!signal.aborted) {
       try {
-        for await (const event of this.engine.log({ ...this.store.binding(id), cursor }, signal)) {
+        for await (const event of engine.log({ ...this.store.binding(id), cursor }, signal)) {
           if (!('durable' in event) || !event.durable) continue
           const binding = this.store.binding(id)
           this.presentation.observe(binding, event, event.durable.seq <= binding.cursor)
@@ -463,17 +525,21 @@ export class Host {
           if (event.type === 'session.inbox.delivered') {
             inputId = event.data.inboxID
             if (!this.store.inbound(inputId)) {
-              const message = await this.engine.message(binding.sessionId, inputId).catch((error) => {
+              const message = await engine.message(binding.sessionId, inputId).catch((error) => {
                 // Control inbox entries do not necessarily create a message. Other errors must replay the event.
-                if ((error as { _tag?: string })?._tag === 'MessageNotFoundError') return
+                if (
+                  (error as { _tag?: string })?._tag === 'MessageNotFoundError' ||
+                  (error instanceof IneffaError && error.code === 'message_not_found')
+                )
+                  return
                 throw error
               })
               if (message) inputId = sourceInputId(message)
             }
           }
           if (event.type === 'session.step.ended' || event.type === 'session.step.failed') {
-            if (!replay) this.engine.debug.usage(event)
-            const message = await this.engine.message(binding.sessionId, event.data.assistantMessageID)
+            if (!replay) engine.debug.usage(event)
+            const message = await engine.message(binding.sessionId, event.data.assistantMessageID)
             if (message.type === 'assistant') {
               const text = message.content
                 .filter((part) => part.type === 'text')
@@ -482,12 +548,12 @@ export class Host {
               const publicText = text + (message.error ? `\n\n本轮处理失败：${message.error.message}` : '')
               const complete = event.type === 'session.step.failed' || event.data.finish !== 'tool-calls'
               if (complete && binding.debug && !replay) {
-                const report = this.engine.debug.report(binding.sessionId, event.created)
+                const report = engine.debug.report(binding.sessionId, event.created)
                 this.store.saveDebugReport(id, message.id, report)
                 this.store.saveDebugReport(id, this.presentation.sourceId(binding, message.id), report)
               }
               this.presentation.step(binding, message.id, publicText, complete, replay, Boolean(message.error))
-              if (complete && !replay) this.engine.debug.finish(binding.sessionId, event.created)
+              if (complete && !replay) engine.debug.finish(binding.sessionId, event.created)
             }
           }
           if (replay) {
@@ -507,11 +573,11 @@ export class Host {
       backoff = Math.min(backoff * 2, 15_000)
     }
   }
-  private async readLive() {
+  private async readLive(engine: Engine) {
     let backoff = 250
     while (!this.controller.signal.aborted) {
       try {
-        for await (const event of this.engine.events(this.controller.signal)) {
+        for await (const event of engine.events(this.controller.signal)) {
           backoff = 250
           if (event.type === 'session.text.delta') {
             const binding = this.store.bySession(event.data.sessionID)
@@ -552,7 +618,7 @@ export class Host {
       await delay(backoff, undefined, { signal: this.controller.signal }).catch(() => {})
       if (!this.controller.signal.aborted) {
         for (const binding of this.store.bindings()) {
-          if (this.adapters.has(binding.adapterId))
+          if (this.adapters.has(binding.adapterId) && binding.backend === engine.backend)
             await this.questions
               .recover(binding)
               .catch((error) => this.emit({ type: 'error', bindingId: binding.id, message: errorMessage(error) }))
@@ -600,11 +666,12 @@ export class Host {
   }
   private async stopBinding(bindingId: string, cancelQueued = true) {
     const b = this.store.binding(bindingId)
-    const queued = cancelQueued ? await this.engine.pending(b.sessionId) : []
-    await this.engine.stop(b.sessionId, cancelQueued)
+    const engine = this.engineFor(b)
+    const queued = cancelQueued ? await engine.pending(b.sessionId) : []
+    await engine.stop(b.sessionId, cancelQueued)
     this.questions.closeBinding(bindingId)
     this.presentation.interrupt(b)
-    this.engine.debug.clear(b.sessionId)
+    engine.debug.clear(b.sessionId)
     for (const item of queued) if (this.store.inbound(item.id)) this.store.inboundState(item.id, 'cancelled')
   }
   private async stopWatching(bindingId: string) {
@@ -630,12 +697,16 @@ export class Host {
       this.store.archive(bindingId)
       await this.stopWatching(bindingId)
       this.presentation.clear(binding)
-      // OpenCode interrupts execution, waits for idle, and removes its session history.
+      // The backend stops execution and removes its native session history.
       try {
-        await this.engine.native.sessions.remove({ sessionID: binding.sessionId })
+        await this.engineFor(binding).removeSession(binding.sessionId)
       } catch (error) {
         // A previous attempt may have removed the native session before the local transaction committed.
-        if ((error as { _tag?: string })?._tag !== 'SessionNotFoundError') throw error
+        if (
+          (error as { _tag?: string })?._tag !== 'SessionNotFoundError' &&
+          !(error instanceof IneffaError && error.code === 'session_not_found')
+        )
+          throw error
       }
       this.store.remove(bindingId)
     })
@@ -646,17 +717,31 @@ export class Host {
   }
   private async resetBinding(bindingId: string, input?: Inbound) {
     const previous = this.store.binding(bindingId)
-    const info = await this.engine.native.sessions.get({ sessionID: previous.sessionId })
+    const adapter = this.adapter(previous.adapterId)
+    const backend = adapter.platform === 'web' ? previous.backend : (adapter.backend ?? 'opencode')
+    if (!this.engines.has(backend)) throw new IneffaError('backend_unavailable', '所选后端未加载。')
+    const info = await this.engineFor(previous).getSession(previous.sessionId)
     await this.stopBinding(bindingId)
     await this.stopWatching(bindingId)
     this.presentation.clear(previous)
     if (input?.command) input.command.previousSessionId = previous.sessionId
-    const next = this.store.replace({ ...previous, agent: info.agent ?? previous.agent }, input)
+    const inherited =
+      backend === previous.backend && info.model ? `${info.model.providerID}/${info.model.id}` : undefined
+    const model = adapter.model ?? inherited
+    const next = this.store.replace(
+      {
+        ...previous,
+        backend,
+        model,
+        agent: backend === previous.backend ? (info.agent ?? previous.agent) : adapter.agent,
+      },
+      input
+    )
     if (input) await this.submit(this.store.inbound(input.id)!)
     else {
       await this.ensure(next)
-      if (info.model && !this.adapters.get(next.adapterId)?.model)
-        await this.engine.native.sessions.switchModel({ sessionID: next.sessionId, model: info.model })
+      if (info.model && backend === previous.backend && !adapter.model)
+        await this.engineFor(next).switchModel(next.sessionId, info.model)
     }
     this.emit({ type: 'change', bindingId: next.id })
     return this.store.binding(next.id)
@@ -688,14 +773,14 @@ export class Host {
   async close() {
     this.controller.abort()
     await Promise.allSettled([
-      this.stream,
+      ...this.streams,
       ...[...this.watchers.values()].map((watcher) => watcher.promise),
       ...this.submissions.values(),
     ])
     await this.questions.flush()
     await this.delivery.flush()
     await Promise.allSettled([...this.adapters.values()].map((adapter) => adapter.stop()))
-    await this.engine.close()
+    await Promise.all([...this.engines.values()].map((engine) => engine.close()))
     this.store.close()
   }
 }

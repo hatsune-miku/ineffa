@@ -372,11 +372,15 @@ export class ConfigTransfer {
             if (
               previous &&
               this.host.store.bindings().some((b) => b.adapterId === item.id) &&
-              (account.directory !== previous.directory || account.agent !== previous.agent)
+              (account.directory !== previous.directory ||
+                (account.backend === previous.backend && account.agent !== previous.agent) ||
+                (account.platform ?? 'kook') !== (previous.platform ?? 'kook') ||
+                account.appId !== previous.appId ||
+                account.domain !== previous.domain)
             ) {
               throw new IneffaError(
                 'account_in_use',
-                `账号「${item.name}」还有活跃会话，请保留原工作目录和 Agent，或先归档会话。`,
+                `账号「${item.name}」还有活跃会话，请保留原平台身份、工作目录和 Agent，或先归档会话。`,
                 409
               )
             }

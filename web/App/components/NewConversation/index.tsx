@@ -1,4 +1,6 @@
-import { type FormEvent, useId, useState } from 'react'
+import { type FormEvent, useEffect, useId, useState } from 'react'
+
+import type { Backend } from 'ineffa'
 
 import { Alert, Button, ComboBox, Dialog, Field, TextBox } from '@a1knla/cakeui'
 
@@ -18,8 +20,21 @@ type NewConversationProps = {
 export function NewConversation({ catalog, close, created, inline = false }: NewConversationProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [backend, setBackend] = useState<Backend>('opencode')
+  const [piCatalog, setPiCatalog] = useState<Catalog | null>(null)
+  const selectedCatalog = backend === 'pi' ? piCatalog : catalog
+  useEffect(() => {
+    if (backend !== 'pi') return
+    const controller = new AbortController()
+    api<Catalog>('/catalog?backend=pi', undefined, controller.signal)
+      .then(setPiCatalog)
+      .catch((error) => {
+        if (!controller.signal.aborted) setError(messageOf(error))
+      })
+    return () => controller.abort()
+  }, [backend])
   const formId = useId()
-  const ready = Boolean(catalog?.agents.length)
+  const ready = Boolean(selectedCatalog?.agents.length)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -32,6 +47,7 @@ export function NewConversation({ catalog, close, created, inline = false }: New
     try {
       const result = await api<{ id: string }>('/sessions', {
         title: data.get('title'),
+        backend,
         agent: data.get('agent'),
         model: data.get('model'),
       })
@@ -54,9 +70,23 @@ export function NewConversation({ catalog, close, created, inline = false }: New
       <Field label="会话名称" htmlFor={`${formId}-title`}>
         <TextBox className="form-control" id={`${formId}-title`} name="title" required maxLength={120} autoFocus />
       </Field>
+      <Field label="后端" htmlFor={`${formId}-backend`}>
+        <ComboBox
+          className="form-control"
+          id={`${formId}-backend`}
+          value={backend}
+          onChange={(event) => {
+            setBackend(event.target.value as Backend)
+            setError('')
+          }}
+        >
+          <option value="opencode">OpenCode</option>
+          <option value="pi">Pi</option>
+        </ComboBox>
+      </Field>
       <Field label="Agent" htmlFor={`${formId}-agent`}>
-        <ComboBox className="form-control" id={`${formId}-agent`} name="agent" defaultValue="build">
-          {catalog?.agents.map((agent) => (
+        <ComboBox key={backend} className="form-control" id={`${formId}-agent`} name="agent" defaultValue="build">
+          {selectedCatalog?.agents.map((agent) => (
             <option value={agent.id} key={agent.id}>
               {agent.name ?? agent.id}
             </option>
@@ -64,9 +94,15 @@ export function NewConversation({ catalog, close, created, inline = false }: New
         </ComboBox>
       </Field>
       <Field label="模型" htmlFor={`${formId}-model`}>
-        <ComboBox className="form-control" id={`${formId}-model`} name="model">
-          <option value="">默认模型</option>
-          {catalog?.models.map((model) => (
+        <ComboBox
+          key={backend}
+          className="form-control"
+          id={`${formId}-model`}
+          name="model"
+          required={backend === 'pi'}
+        >
+          <option value="">{backend === 'pi' ? '选择 OpenAI 兼容模型' : '默认模型'}</option>
+          {selectedCatalog?.models.map((model) => (
             <option value={model.id} key={model.id}>
               {model.name} · {model.provider}
             </option>

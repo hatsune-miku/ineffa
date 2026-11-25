@@ -15,12 +15,16 @@ import { ApiError, type Catalog, type ConversationDetail, type Conversation as C
 import { Icon } from '../components/Icon'
 import { IconButton } from '../components/IconButton'
 import { Loading } from '../components/Loading'
-import { messageOf } from '../utils'
+import { messageOf, platformName } from '../utils'
 
 import './index.css'
 
 function initialSelection() {
   return location.hash.startsWith('#session/') ? decodeURIComponent(location.hash.slice(9)) : ''
+}
+
+function groupOf(session: ConversationInfo) {
+  return `${session.platform}:${session.address.guildId ?? session.adapterId}`
 }
 
 export function App() {
@@ -192,7 +196,7 @@ export function App() {
       (showArchive ? Boolean(s.archivedAt) : !s.archivedAt) &&
       `${s.address.title} ${s.adapterId} ${s.agent}`.toLowerCase().includes(search.toLowerCase())
   )
-  const groups = [...new Set(shown.map((s) => s.address.guildId ?? (s.adapterId === 'web' ? 'web' : s.adapterId)))]
+  const groups = [...new Map(shown.map((session) => [groupOf(session), session])).entries()]
   return (
     <CakeProvider theme={palette} mode={mode} density="comfortable" className="app-root">
       {authenticated === false ? (
@@ -239,11 +243,15 @@ export function App() {
               />
             </div>
             <nav className="session-list" aria-label="会话列表">
-              {groups.map((group) => (
+              {groups.map(([group, representative]) => (
                 <section key={group}>
-                  <h2 className="group-label">{group === 'web' ? '个人空间' : `KOOK · ${group}`}</h2>
+                  <h2 className="group-label">
+                    {representative.platform === 'web'
+                      ? '个人空间'
+                      : `${platformName(representative.platform)} · ${representative.address.guildId ?? representative.adapterId}`}
+                  </h2>
                   {shown
-                    .filter((s) => (s.address.guildId ?? (s.adapterId === 'web' ? 'web' : s.adapterId)) === group)
+                    .filter((session) => groupOf(session) === group)
                     .map((s) => (
                       <ContextMenu
                         key={s.id}
@@ -313,7 +321,9 @@ export function App() {
               />
               <div className="header-breadcrumb">
                 <span className="breadcrumb-scope">
-                  {view === 'settings' ? '工作空间' : detail?.binding.address.guildId ? 'KOOK' : '个人空间'}
+                  {view === 'settings'
+                    ? '工作空间'
+                    : platformName(sessions.find((item) => item.id === selected)?.platform ?? 'web')}
                 </span>
                 <Icon className="breadcrumb-divider" name="chevron" />
                 <h1 className="breadcrumb-title">

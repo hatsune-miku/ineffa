@@ -1,4 +1,4 @@
-import type { AgentPrompt, Binding } from 'ineffa'
+import type { AgentPrompt, Backend, Binding, Engine, EngineForm } from 'ineffa'
 
 import type { OpenCode } from '@opencode/sdk'
 
@@ -9,11 +9,12 @@ export type { ProviderView } from '../src/providers'
 
 export type Conversation = Binding & { running: boolean; platform: string }
 export type Permission = Awaited<ReturnType<OpenCode.Interface['permission']['list']>>[number]
-export type PendingForm = Awaited<ReturnType<OpenCode.Interface['form']['get']>>
+export type PendingForm = EngineForm
 export type FormField = PendingForm['fields'][number]
 export type ConversationDetail = {
   binding: Binding
   accountModel?: string
+  capabilities: Engine['capabilities']
   messages: MessageView[]
   cursor?: string
   running: boolean
@@ -47,10 +48,13 @@ export type Account = {
   name: string
   platform: string
   agent: string
+  backend: Backend
   model?: string
   directory: string
   editable?: boolean
-  access?: { guilds?: string[]; channels?: string[]; users?: string[] }
+  appId?: string
+  domain?: 'feishu' | 'lark'
+  access?: { guilds?: string[]; channels?: string[]; chats?: string[]; users?: string[] }
   identity?: { id: string; name: string }
   agentPrompt?: AgentPrompt
   status: { state: string; error?: string }

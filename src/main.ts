@@ -1,10 +1,10 @@
-import { Host, OpenCodeBridge, Store } from 'ineffa'
-import { kook } from 'ineffa-kook'
+import { Host, OpenCodeBridge, PiBridge, Store } from 'ineffa'
 import { resolve } from 'node:path'
 
-import { AccountsConfig, prepareDirectories, readConfig } from './config'
+import { AccountsConfig, accountAdapter, prepareDirectories, readConfig } from './config'
 import { applyPendingImport } from './config-transfer'
 import { acquireOwnership } from './ownership'
+import { ProviderSettings } from './providers'
 import { createServer } from './server'
 import { webAdapter } from './web-adapter'
 
@@ -20,9 +20,13 @@ await applyPendingImport(
 const savedAccounts = await accounts.load()
 const store = new Store(resolve(dataDirectory, 'ineffa.sqlite'))
 const engine = await OpenCodeBridge.open(resolve(dataDirectory, 'opencode'), config.opencode)
-const host = new Host(store, engine, config.limits)
+const providers = new ProviderSettings(engine)
+const pi = await PiBridge.open(resolve(dataDirectory, 'pi'), {
+  resolveModel: (reference) => providers.resolvePiModel(reference),
+})
+const host = new Host(store, engine, config.limits, [pi])
 await host.addAdapter(webAdapter(directory))
-for (const adapter of [...(config.adapters ?? []), ...savedAccounts.map(kook)]) await host.addAdapter(adapter)
+for (const adapter of [...(config.adapters ?? []), ...savedAccounts.map(accountAdapter)]) await host.addAdapter(adapter)
 await host.start()
 const service = createServer(host, {
   hostname: process.env.INEFFA_HOST,

@@ -6,6 +6,14 @@ import type { OpenCode, OpenCodeEvent } from '@opencode/sdk'
 
 import { browserRuntime } from './browser'
 import { DebugTimings } from './debug'
+import {
+  type Engine,
+  type EngineEvent,
+  type EngineMessage,
+  type FormAnswer,
+  type ModelReference,
+  sourceInputId,
+} from './engine'
 import { modelReference } from './model'
 import { createEmbedded } from './opencode-runtime'
 import { silentPermissions } from './permissions'
@@ -14,17 +22,13 @@ import { identity } from './store'
 import { instructionOverrides, toolDirectory } from './tool-directory'
 import type { Attachment, Binding, Inbound } from './types'
 
-export type EngineMessage = Awaited<ReturnType<OpenCode.Interface['sessions']['message']>>
 export type OpenCodeOptions = Omit<OpenCode.CreateOptions, 'database'> & { browser?: boolean }
+export type { EngineMessage } from './engine'
+export { sourceInputId } from './engine'
 
-export function sourceInputId(message: EngineMessage): string {
-  const source = message.metadata?.ineffa
-  return source && typeof source === 'object' && !Array.isArray(source) && typeof source.inputId === 'string'
-    ? source.inputId
-    : message.id
-}
-
-export class OpenCodeBridge {
+export class OpenCodeBridge implements Engine {
+  readonly backend = 'opencode' as const
+  readonly capabilities = { permissions: true, agents: true, compact: true, steer: true }
   private constructor(
     readonly native: OpenCode.Interface,
     readonly debug: DebugTimings,
@@ -77,7 +81,7 @@ export class OpenCodeBridge {
     const decision = new Promise<boolean>((resolve) => {
       decide = resolve
     })
-    const events = this.events(controller.signal)
+    const events = this.native.events.subscribe({ signal: controller.signal })
     const listener = (async () => {
       try {
         for await (const event of events) {
@@ -183,26 +187,35 @@ export class OpenCodeBridge {
       },
     })
   }
-  log(binding: Binding, signal: AbortSignal) {
-    return this.native.sessions.log(
+  async *log(binding: Binding, signal: AbortSignal): AsyncIterable<EngineEvent> {
+    const events = this.native.sessions.log(
       { sessionID: binding.sessionId, after: binding.cursor || undefined, follow: true },
       { signal }
     )
+    for await (const event of events) {
+      const normalized = runtimeEvent(event)
+      if (normalized) yield normalized
+    }
   }
-  events(signal: AbortSignal) {
-    return this.native.events.subscribe({ signal })
+  async *events(signal: AbortSignal): AsyncIterable<EngineEvent> {
+    for await (const event of this.native.events.subscribe({ signal })) {
+      const normalized = runtimeEvent(event)
+      if (normalized) yield normalized
+    }
   }
   ready(directory: string) {
     return this.native.plugin.awaitActivation({ location: { directory } })
   }
-  message(sessionId: string, messageId: string) {
-    return this.native.sessions.message({ sessionID: sessionId, messageID: messageId })
+  async message(sessionId: string, messageId: string) {
+    return runtimeMessage(await this.native.sessions.message({ sessionID: sessionId, messageID: messageId }))
   }
-  messages(sessionId: string, cursor?: string) {
-    return this.native.message.list({ sessionID: sessionId, limit: 100, order: 'desc', cursor })
+  async messages(sessionId: string, cursor?: string) {
+    const page = await this.native.message.list({ sessionID: sessionId, limit: 100, order: 'desc', cursor })
+    return { ...page, data: page.data.map(runtimeMessage) }
   }
-  pending(sessionId: string) {
-    return this.native.sessions.inbox.list({ sessionID: sessionId })
+  async pending(sessionId: string) {
+    const pending = await this.native.sessions.inbox.list({ sessionID: sessionId })
+    return pending.map((item) => ({ ...item, payload: 'text' in item.payload ? { text: item.payload.text } : {} }))
   }
   async stop(sessionId: string, cancelQueued = true) {
     await this.native.sessions.interrupt({ sessionID: sessionId, continue: false })
@@ -212,7 +225,85 @@ export class OpenCodeBridge {
       }
     }
   }
+  getSession(sessionId: string) {
+    return this.native.sessions.get({ sessionID: sessionId })
+  }
+  switchModel(sessionId: string, model: ModelReference) {
+    return this.native.sessions.switchModel({ sessionID: sessionId, model })
+  }
+  renameSession(sessionId: string, title: string) {
+    return this.native.sessions.rename({ sessionID: sessionId, title })
+  }
+  removeSession(sessionId: string) {
+    return this.native.sessions.remove({ sessionID: sessionId })
+  }
+  exportSession(sessionId: string) {
+    return this.native.sessions.export({ sessionID: sessionId })
+  }
+  compactSession(sessionId: string) {
+    return this.native.sessions.compact({ sessionID: sessionId })
+  }
+  active() {
+    return this.native.sessions.active()
+  }
+  cancelPending(sessionId: string, inputId: string) {
+    return this.native.sessions.inbox.cancel({ sessionID: sessionId, inboxID: inputId })
+  }
+  steerPending(sessionId: string, inputId: string) {
+    return this.native.sessions.inbox.steer({ sessionID: sessionId, inboxID: inputId })
+  }
+  listForms(sessionId: string) {
+    return this.native.form.list({ sessionID: sessionId })
+  }
+  getFormState(sessionId: string, formId: string) {
+    return this.native.form.state({ sessionID: sessionId, formID: formId })
+  }
+  replyForm(sessionId: string, formId: string, answer: FormAnswer) {
+    return this.native.form.reply({ sessionID: sessionId, formID: formId, answer })
+  }
+  cancelForm(sessionId: string, formId: string) {
+    return this.native.form.cancel({ sessionID: sessionId, formID: formId })
+  }
   close() {
     return this.native.close()
   }
+}
+
+type NativeJournalEvent =
+  ReturnType<OpenCode.Interface['sessions']['log']> extends AsyncIterable<infer Event> ? Event : never
+
+function runtimeEvent(event: OpenCodeEvent | NativeJournalEvent): EngineEvent | undefined {
+  switch (event.type) {
+    case 'session.execution.started':
+    case 'session.execution.succeeded':
+    case 'session.execution.failed':
+    case 'session.execution.interrupted':
+    case 'session.step.started':
+    case 'session.step.ended':
+    case 'session.step.failed':
+    case 'session.reasoning.started':
+    case 'session.reasoning.ended':
+    case 'session.tool.input.started':
+    case 'session.inbox.delivered':
+    case 'session.text.delta':
+    case 'form.created':
+    case 'form.replied':
+    case 'form.cancelled':
+    case 'permission.asked':
+    case 'session.status':
+      return event
+    case 'server.connected':
+      return { ...event, created: Date.now() }
+  }
+}
+
+function runtimeMessage(message: Awaited<ReturnType<OpenCode.Interface['sessions']['message']>>): EngineMessage {
+  if (
+    message.type === 'user' ||
+    message.type === 'assistant' ||
+    message.type === 'synthetic' ||
+    message.type === 'compaction'
+  )
+    return message
+  return { id: message.id, time: message.time, type: 'internal', metadata: message.metadata }
 }

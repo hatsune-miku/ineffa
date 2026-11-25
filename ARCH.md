@@ -1,14 +1,14 @@
 # Ineffa 架构设计
 
-状态：0.1.0 实现基线。已完成 Bun + OpenCode 2.0.3 进程内接入、WebUI 与自动化集成验证；KOOK 真实网关的长时间稳定性仍需部署环境验证。运行方式见 [README.md](README.md)。
+状态：支持 OpenCode 2.0.3、Pi 1.6.0 进程内接入，以及 KOOK、飞书 / Lark Adapter。Pi 当前为基础能力版本；飞书尚未进行真实租户联调。运行方式见 [README.md](README.md)。
 
 ## 1. 产品模型与原则
 
-Ineffa 是基于 Bun 和 OpenCode 的多平台 Agent 运行平台，定位接近 OpenClaw、Hermes Agent。用户在接入的消息平台中选择讨论空间、与 Agent 对话、查看协作过程；OpenCode 负责对话内部的执行。
+Ineffa 是基于 Bun 的多平台 Agent 运行平台。用户在接入的消息平台中选择讨论空间、与 Agent 对话、查看协作过程；OpenCode 或 Pi 负责对话内部的执行。
 
 Ineffa 是运行平台的名字，不是其上所有 Bot / Agent 的统一身份。每个平台账号有自己的显示名称、平台 ID、身份定义和职责；框架不注入“你是 Ineffa”或要求账号以 Ineffa 自称。KOOK 是官方支持的 Adapter，本文的 Guild / Channel、数字账号 ID 和 KMarkdown 均为该 Adapter 的实例，不作为其他平台的通用前提。
 
-核心原则：**用户选择讨论空间，消息决定唤醒对象，同一个 Agent 在同一个空间里延续同一个 OpenCode 对话。**
+核心原则：**用户选择讨论空间，消息决定唤醒对象，同一个 Agent 在同一个空间里延续同一个后端原生对话。**
 
 - **简单**：路由只做身份和地址匹配，不调用模型，不判断任务类型，不自动拆解或分配工作。
 - **快速**：普通消息直达 OpenCode，不固定插入记忆检索、计划、总结、反思等模型调用或工具调用。
@@ -60,6 +60,18 @@ WebUI 会话列表提供右键删除。确认后由 OpenCode 停止执行并删�
 历史补全不放在默认首字路径上；未取得的信息就明确视为未取得，不让 Agent 表现得像已经读过整个 Guild。
 
 ## 3. 最小运行结构
+
+### 多后端与多平台
+
+`Adapter → Host → Engine` 是两条独立的扩展边界。KOOK、飞书 / Lark 与 Web Adapter 只处理平台身份、地址、格式和投递；`Engine` 统一运行生命周期、事件、消息和提问，OpenCode 与 Pi 各自保留原生工具执行和会话存储。Host 不接管工具循环。
+
+账号的 `backend` 是新会话默认值。绑定保存 `backend`、原生 `sessionId` 与创建时模型，旧数据库迁移为 `opencode`；修改账号后端不会迁移已有会话或重用其事件游标。平台 `/new` 使用当前账号默认后端，Web 重置保留原后端。跨后端上下文迁移不在本阶段范围内。
+
+Pi 使用进程内 SDK 与原生 JSONL；一个小型 SQLite 投递日志记录已接收输入、事件游标及消息映射，不作为第二份模型上下文。异常退出后不自动重跑执行中的输入。共享的 OpenAI 兼容模型仍由现有配置页面管理；后端未实现的高级管理能力通过 capabilities 隐藏并由 API 拒绝。具体能力范围见 [后端说明](docs/backends.md)。
+
+飞书 / Lark 通过官方 SDK 长连接接入，群聊地址由 Adapter 定义，国内与国际区域隔离；账号配置按平台保存不同凭据和访问范围。其消息格式约束只由对应 Adapter 提供，平台能力不进入执行引擎。接入步骤见 [飞书说明](docs/lark.md)。
+
+以下 OpenCode 原生行为说明仅适用于 OpenCode 后端。
 
 ```mermaid
 flowchart LR
