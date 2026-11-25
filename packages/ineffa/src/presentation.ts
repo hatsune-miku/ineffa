@@ -1,6 +1,6 @@
 import { Delivery } from './delivery'
+import { isDirectoryTool } from './directories'
 import type { EngineEvent } from './engine'
-import { isDirectoryTool } from './tool-directory'
 import type { Binding } from './types'
 
 type Turn = {

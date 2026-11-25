@@ -8,16 +8,9 @@ import { Plugin } from '@opencode/plugin'
 import type { SessionContext } from '@opencode/plugin/promise/session'
 
 import { browserServer } from './browser'
+import { type DirectoryGroup, directoryTools, isDirectoryTool } from './directories'
 import type { AccountPrompt } from './prompt'
 
-export const directoryTools = {
-  list_skills: 'skills',
-  list_browser_tools: 'browser',
-  list_coding_tools: 'coding',
-  list_tools: 'generic',
-} as const
-
-type Group = (typeof directoryTools)[keyof typeof directoryTools]
 type Tool = SessionContext['tools'][string]
 type Catalog = { tools: Record<string, Tool>; skills: { id: string; name: string; description?: string }[] }
 
@@ -89,19 +82,15 @@ export const instructionOverrides = [
   ),
 ]
 
-export function isDirectoryTool(name: string): name is keyof typeof directoryTools {
-  return Object.hasOwn(directoryTools, name)
-}
-
-function toolGroup(name: string): Group {
+function toolGroup(name: string): DirectoryGroup {
   if (name === 'skill') return 'skills'
   if (name.startsWith('browser_') || name.startsWith(`${browserServer}_`)) return 'browser'
   if (name.startsWith('opencode_') || codingTools.has(name)) return 'coding'
   return 'generic'
 }
 
-function listedGroups(messages: SessionContext['messages']): Set<Group> {
-  const groups = new Set<Group>()
+function listedGroups(messages: SessionContext['messages']): Set<DirectoryGroup> {
+  const groups = new Set<DirectoryGroup>()
   for (const message of messages) {
     for (const part of message.content) {
       if (part.type === 'tool-result' && part.result.type !== 'error' && isDirectoryTool(part.name)) {

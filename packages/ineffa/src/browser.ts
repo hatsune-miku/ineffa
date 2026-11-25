@@ -5,6 +5,11 @@ import { Mcp } from '@opencode/core/mcp/index'
 
 export const browserServer = 'ineffa_browser'
 
+export function browserCommand() {
+  const cli = fileURLToPath(new URL('./cli.js', import.meta.resolve('@playwright/mcp')))
+  return ['node', cli, '--headless', '--browser', 'chromium', '--isolated']
+}
+
 // Register before OpenCode takes its initial MCP tool snapshot. Disable this
 // default with browser: false when supplying a custom MCP server configuration.
 export const browserRuntime = Mcp.node.replace(
@@ -13,11 +18,10 @@ export const browserRuntime = Mcp.node.replace(
       Mcp.Service,
       Effect.gen(function* headlessBrowser() {
         const original = yield* Mcp.Service
-        const cli = fileURLToPath(new URL('./cli.js', import.meta.resolve('@playwright/mcp')))
         yield* original.transform((editor) => {
           editor.set(browserServer, {
             type: 'local',
-            command: ['node', cli, '--headless', '--browser', 'chromium', '--isolated'],
+            command: browserCommand(),
           })
         })
         return original

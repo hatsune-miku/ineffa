@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { Alert, Button, ComboBox, Dialog, TextBox } from '@a1knla/cakeui'
 
+import { BackendSwitch } from './BackendSwitch'
 import { PermissionRules } from './PermissionRules'
 
 import { type Catalog, type ConversationDetail, api } from '../../../api'
@@ -46,7 +47,7 @@ export function ManageConversation({
     setNotice('')
     try {
       const value = await api<{ id?: string }>(`/sessions/${detail.binding.id}/${name}`, data)
-      await changed(name === 'reset' ? value.id : name === 'archive' ? '' : undefined)
+      await changed(name === 'reset' || name === 'backend' ? value.id : name === 'archive' ? '' : undefined)
       setNotice(name === 'compact' ? '已提交上下文压缩。' : '已更新。')
     } catch (err) {
       setError(messageOf(err))
@@ -125,6 +126,25 @@ export function ManageConversation({
             <dd className="fact-value">{detail.binding.sessionId}</dd>
           </div>
         </dl>
+        {detail.binding.predecessorId && (
+          <div className="button-row">
+            <Button variant="ghost" onClick={() => void changed(detail.binding.predecessorId)}>
+              查看切换前的会话
+            </Button>
+          </div>
+        )}
+        {detail.switchTarget && (
+          <BackendSwitch
+            key={detail.binding.id}
+            target={detail.switchTarget}
+            directory={detail.binding.directory}
+            disabled={
+              detail.running || Boolean(detail.pending.length || detail.forms.length || detail.permissions.length)
+            }
+            busy={busy}
+            submit={(model) => action('backend', { backend: detail.switchTarget!.backend, model })}
+          />
+        )}
         {!detail.binding.archivedAt && (
           <>
             {detail.capabilities.agents && (

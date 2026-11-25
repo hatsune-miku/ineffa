@@ -51,6 +51,7 @@ export class PiJournal {
         form TEXT NOT NULL, status TEXT NOT NULL, answer TEXT
       );
       CREATE INDEX IF NOT EXISTS events_session ON events(sessionId, seq);
+      CREATE INDEX IF NOT EXISTS messages_entry ON messages(sessionId, entryId);
       CREATE INDEX IF NOT EXISTS inputs_session ON inputs(sessionId, state, position);
     `)
   }

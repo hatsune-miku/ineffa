@@ -155,9 +155,15 @@ test('legacy delivery databases assign OpenCode without changing native session 
   const original = before.ensure('a', human('a', '').address, 'build', directory)
   before.close()
   const legacy = new Database(path)
-  legacy.exec(
-    'ALTER TABLE bindings DROP COLUMN backend; ALTER TABLE bindings DROP COLUMN model; PRAGMA user_version=8;'
-  )
+  legacy.exec(`
+    DROP INDEX handoff_successor;
+    DROP TABLE handoffs;
+    ALTER TABLE inbound DROP COLUMN settled;
+    ALTER TABLE bindings DROP COLUMN predecessorId;
+    ALTER TABLE bindings DROP COLUMN backend;
+    ALTER TABLE bindings DROP COLUMN model;
+    PRAGMA user_version=8;
+  `)
   legacy.close()
   const after = new Store(path)
   try {

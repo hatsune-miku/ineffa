@@ -1,8 +1,8 @@
 import { Plugin } from '@opencode/plugin'
 
 import { observeFirstSse } from './debug-stream'
+import { isDirectoryTool } from './directories'
 import type { EngineEvent } from './engine'
-import { isDirectoryTool } from './tool-directory'
 
 type RequestTiming = {
   startedAt: number

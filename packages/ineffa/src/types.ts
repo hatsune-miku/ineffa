@@ -69,6 +69,7 @@ export interface Adapter {
 }
 export type Binding = {
   id: string
+  predecessorId?: string
   backend: Backend
   model?: string
   adapterId: string

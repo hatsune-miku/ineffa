@@ -146,6 +146,7 @@ export interface Engine {
   getFormState(sessionId: string, formId: string): Promise<{ status: string } | undefined>
   replyForm(sessionId: string, formId: string, answer: FormAnswer): Promise<unknown>
   cancelForm(sessionId: string, formId: string): Promise<unknown>
+  releaseSession?(sessionId: string): Promise<void>
   close(): Promise<void>
 }
 

@@ -210,7 +210,11 @@ export class OpenCodeBridge implements Engine {
     return runtimeMessage(await this.native.sessions.message({ sessionID: sessionId, messageID: messageId }))
   }
   async messages(sessionId: string, cursor?: string) {
-    const page = await this.native.message.list({ sessionID: sessionId, limit: 100, order: 'desc', cursor })
+    const page = await this.native.message.list({
+      sessionID: sessionId,
+      limit: 100,
+      ...(cursor ? { cursor } : { order: 'desc' }),
+    })
     return { ...page, data: page.data.map(runtimeMessage) }
   }
   async pending(sessionId: string) {

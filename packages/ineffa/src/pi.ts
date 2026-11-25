@@ -5,12 +5,13 @@ import { fileURLToPath } from 'node:url'
 import { Type } from 'typebox'
 
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
-import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai'
+import type { AssistantMessage, ImageContent, ToolResultMessage } from '@earendil-works/pi-ai'
 import {
   type AgentSession,
   type AgentSessionEvent,
   DefaultResourceLoader,
   ModelRuntime,
+  type SessionEntry,
   SessionManager,
   SettingsManager,
   type ToolDefinition,
@@ -29,6 +30,8 @@ import type {
 } from './engine'
 import { PiDebug } from './pi-debug'
 import { PiJournal, type PiSessionRecord } from './pi-journal'
+import { PiResources, type PiResourcesConfig, piDirectories } from './pi-resources'
+import { piTransport } from './pi-transport'
 import type { AccountPrompt } from './prompt'
 import { identity } from './store'
 import { type Attachment, type Binding, type Inbound, IneffaError } from './types'
@@ -47,6 +50,7 @@ export type PiModel = {
 
 export type PiOptions = {
   resolveModel: (reference: string) => Promise<PiModel | undefined>
+  resources?: (directory: string) => Promise<PiResourcesConfig>
 }
 
 type RunningSession = {
@@ -58,11 +62,22 @@ type RunningSession = {
   failed: boolean
   processing?: Promise<void>
   stopping: boolean
+  resources: PiResources
 }
 
-const directories = ['list_skills', 'list_browser_tools', 'list_coding_tools', 'list_tools']
+const directories = Object.keys(piDirectories)
 type Transcript = { record: PiSessionRecord; session: Pick<AgentSession, 'sessionManager'> }
-const codingTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']
+
+function followingToolResults(entries: SessionEntry[], assistantIndex: number) {
+  const results = new Map<string, ToolResultMessage>()
+  for (let index = assistantIndex + 1; index < entries.length; index++) {
+    const entry = entries[index]!
+    if (entry.type !== 'message') continue
+    if (entry.message.role === 'assistant' || entry.message.role === 'user') break
+    if (entry.message.role === 'toolResult') results.set(entry.message.toolCallId, entry.message)
+  }
+  return results
+}
 
 function emptyTokens(): EngineTokens {
   return { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
@@ -89,7 +104,7 @@ function textContent(content: unknown) {
 /** In-process Pi runtime. Native JSONL owns history; the journal owns accepted input and delivery receipts. */
 export class PiBridge implements Engine {
   readonly backend = 'pi'
-  readonly capabilities = { permissions: false, agents: false, compact: false, steer: false }
+  readonly capabilities = { permissions: false, agents: false, compact: true, steer: false }
   readonly debug = new PiDebug()
   private sessions = new Map<string, Promise<RunningSession>>()
   private listeners = new Set<(event: EngineEvent) => void>()
@@ -183,7 +198,13 @@ export class PiBridge implements Engine {
       refreshOnCreate: false,
       allowModelNetwork: false,
     })
-    const model = await this.configureModel(modelRuntime, record.model)
+    const model = await this.configureModel(modelRuntime, record.model, sessionId)
+    const resources = new PiResources(
+      record.directory,
+      this.directory,
+      await this.options.resources?.(record.directory)
+    )
+    let sessionForPrompt: AgentSession
     const settingsManager = SettingsManager.inMemory({
       defaultTools: directories,
       compaction: { enabled: true },
@@ -196,13 +217,18 @@ export class PiBridge implements Engine {
       settingsManager,
       noExtensions: true,
       noSkills: true,
+      skillsOverride: () => resources.reloadSkills(),
       noContextFiles: true,
       noPromptTemplates: true,
       noThemes: true,
       systemPrompt: 'You are a general-purpose assistant.',
       extensionFactories: [
+        ...resources.extensions(),
         (pi) => {
-          pi.on('before_agent_start', () => ({ systemPrompt: this.systemPrompt(record) }))
+          pi.on('before_agent_start', async (_event, context) => {
+            await resources.restore(sessionForPrompt, this.fileAvailable(record.id), context.signal)
+            return { systemPrompt: this.systemPrompt(record, resources, sessionForPrompt) }
+          })
         },
       ],
     })
@@ -222,7 +248,7 @@ export class PiBridge implements Engine {
       resourceLoader: loader,
       settingsManager,
       sessionManager: manager,
-      customTools: this.tools(record),
+      customTools: this.tools(record, resources),
       thinkingLevel: model.reasoning ? 'medium' : 'off',
     })
     const runtime: RunningSession = {
@@ -231,18 +257,20 @@ export class PiBridge implements Engine {
       messageIds: new WeakMap(),
       failed: false,
       stopping: false,
+      resources,
     }
-    this.restoreTools(runtime)
+    sessionForPrompt = session
     session.subscribe((event) => this.observe(runtime, event))
     await session.bindExtensions({ mode: 'rpc' })
     return runtime
   }
 
-  private async configureModel(runtime: ModelRuntime, reference: string) {
+  private async configureModel(runtime: ModelRuntime, reference: string, sessionId: string) {
     const configured = await this.resolveModel(reference)
     runtime.registerProvider(configured.provider, {
       api: 'openai-completions',
       baseUrl: configured.baseURL,
+      streamSimple: piTransport(this.debug, sessionId),
       models: [
         {
           id: configured.id,
@@ -261,23 +289,28 @@ export class PiBridge implements Engine {
     return model
   }
 
-  private systemPrompt(record: PiSessionRecord) {
+  private systemPrompt(record: PiSessionRecord, resources: PiResources, session: AgentSession) {
     const prompt = this.resolvePrompt(record.id)
+    const files = this.fileAvailable(record.id)
+    const browserCount = resources.names(session, 'browser', files).length
+    const genericCount = resources.names(session, 'generic', files).length
+    const browserServers = resources.serverCount('browser')
+    const genericServers = resources.serverCount('generic')
     return [
       prompt?.system,
       prompt?.context,
       '你由 Pi 驱动，但不代表你是编程/开发特化的 Agent——不要假设用户的专业领域，你只作为通用智能处理用户的请求。',
       `Environment: ${JSON.stringify({ sessionId: record.id, directory: record.directory, platform: process.platform, date: new Date().toISOString().slice(0, 10) })}`,
-      '0 skills loaded. Call `list_skills` to view.',
-      '0 browser-specific tools loaded. Call `list_browser_tools` to view.',
-      `${codingTools.length} OpenCode and coding-specific tools loaded. Call \`list_coding_tools\` to view.`,
-      `${this.fileAvailable(record.id) ? 2 : 1} generic tools loaded. Call \`list_tools\` to view.`,
+      `${resources.skills().skills.filter((skill) => !skill.disableModelInvocation).length} skills loaded. Call \`list_skills\` to view.`,
+      `${browserCount} browser-specific tools loaded${browserServers ? `; ${browserServers} servers available on demand` : ''}. Call \`list_browser_tools\` to view.`,
+      `${resources.names(session, 'coding', files).length} OpenCode and coding-specific tools loaded. Call \`list_coding_tools\` to view.`,
+      `${genericCount} generic tools loaded${genericServers ? `; ${genericServers} servers available on demand` : ''}. Call \`list_tools\` to view.`,
     ]
       .filter(Boolean)
       .join('\n\n')
   }
 
-  private tools(record: PiSessionRecord): ToolDefinition[] {
+  private tools(record: PiSessionRecord, resources: PiResources): ToolDefinition[] {
     const tools: ToolDefinition[] = directories.map((name) => ({
       name,
       label: name,
@@ -288,14 +321,11 @@ export class PiBridge implements Engine {
       },
     }))
     for (const tool of tools) {
-      tool.execute = async () => {
+      tool.execute = async (_callId, _input, signal) => {
         const { session } = await this.load(record.id)
-        const names =
-          tool.name === 'list_coding_tools'
-            ? codingTools
-            : tool.name === 'list_tools'
-              ? ['question', ...(this.fileAvailable(record.id) ? ['send_file'] : [])]
-              : []
+        const group = piDirectories[tool.name as keyof typeof piDirectories]
+        const unavailable = await resources.connect(group, signal)
+        const names = resources.names(session, group, this.fileAvailable(record.id))
         session.setActiveToolsByName([...new Set([...session.getActiveToolNames(), ...names])])
         const definitions = names
           .map((name) => session.getToolDefinition(name))
@@ -305,7 +335,21 @@ export class PiBridge implements Engine {
             description: definition!.description,
             input: definition!.parameters,
           }))
-        return { content: [{ type: 'text', text: JSON.stringify(definitions) }], details: {} }
+        const result =
+          group === 'skills'
+            ? {
+                skills: resources
+                  .skills()
+                  .skills.filter((skill) => !skill.disableModelInvocation)
+                  .map((skill) => ({
+                    name: skill.name,
+                    description: skill.description,
+                    path: skill.filePath,
+                  })),
+                tools: definitions,
+              }
+            : { tools: definitions, unavailable }
+        return { content: [{ type: 'text', text: JSON.stringify(result) }], details: {} }
       }
     }
     tools.push({
@@ -359,21 +403,6 @@ export class PiBridge implements Engine {
     return tools
   }
 
-  private restoreTools(runtime: RunningSession) {
-    const opened = new Set(
-      runtime.session.messages.flatMap((message) =>
-        message.role === 'toolResult' && !message.isError ? [message.toolName] : []
-      )
-    )
-    runtime.session.setActiveToolsByName([
-      ...directories,
-      ...(opened.has('list_coding_tools') ? codingTools : []),
-      ...(opened.has('list_tools')
-        ? ['question', ...(this.fileAvailable(runtime.record.id) ? ['send_file'] : [])]
-        : []),
-    ])
-  }
-
   async submit(binding: Binding, input: Inbound, files: Attachment[] = input.message.files ?? []) {
     if (input.command) throw new Error('Slash 命令不能提交给模型。')
     const runtime = await this.load(binding.sessionId)
@@ -407,7 +436,9 @@ export class PiBridge implements Engine {
         created: Date.now(),
       })
       try {
-        const model = await this.configureModel(runtime.session.modelRuntime, runtime.record.model)
+        const nextResources = (await this.options.resources?.(runtime.record.directory)) ?? {}
+        if (runtime.resources.update(nextResources)) await runtime.session.reload()
+        const model = await this.configureModel(runtime.session.modelRuntime, runtime.record.model, sessionID)
         await runtime.session.setModel(model)
         const attachments = await this.attachments(pending.files)
         if (attachments.images.length && !model.input.includes('image')) {
@@ -515,6 +546,8 @@ export class PiBridge implements Engine {
 
   private observe(runtime: RunningSession, event: AgentSessionEvent) {
     const sessionID = runtime.record.id
+    if (event.type === 'compaction_start') this.debug.suspend(sessionID, true)
+    if (event.type === 'compaction_end') this.debug.suspend(sessionID, false)
     const created = Date.now()
     if (!runtime.inputId) return
     if (event.type === 'message_end' && event.message.role === 'user') {
@@ -553,14 +586,16 @@ export class PiBridge implements Engine {
         })
       }
     } else if (event.type === 'tool_execution_start') {
-      if (!directories.includes(event.toolName)) this.debug.tool(sessionID, event.toolCallId, false)
+      const id = `${runtime.assistantId}:${event.toolCallId}`
+      if (!directories.includes(event.toolName)) this.debug.tool(sessionID, id, false)
       this.publish(sessionID, {
         type: 'session.tool.input.started',
-        data: { sessionID, id: event.toolCallId, name: event.toolName },
+        data: { sessionID, id, name: event.toolName },
         created,
       })
     } else if (event.type === 'tool_execution_end') {
-      if (!directories.includes(event.toolName)) this.debug.tool(sessionID, event.toolCallId, true)
+      if (!directories.includes(event.toolName))
+        this.debug.tool(sessionID, `${runtime.assistantId}:${event.toolCallId}`, true)
     } else if (event.type === 'turn_end') {
       const message = event.message
       if (message.role !== 'assistant') return
@@ -685,7 +720,7 @@ export class PiBridge implements Engine {
     const runtime = await this.load(sessionId)
     runtime.record.model = reference
     if (!runtime.processing)
-      await runtime.session.setModel(await this.configureModel(runtime.session.modelRuntime, reference))
+      await runtime.session.setModel(await this.configureModel(runtime.session.modelRuntime, reference, sessionId))
   }
 
   async renameSession(sessionId: string, title: string) {
@@ -700,10 +735,26 @@ export class PiBridge implements Engine {
     if (!record) throw new IneffaError('session_not_found', '会话不存在。', 404)
     await this.stop(sessionId)
     const runtime = this.sessions.get(sessionId)
-    if (runtime) (await runtime).session.dispose()
+    if (runtime) {
+      const session = (await runtime).session
+      await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' })
+      session.dispose()
+    }
     await rm(record.file, { force: true })
     this.sessions.delete(sessionId)
     this.journal.db.query('DELETE FROM sessions WHERE id=?').run(sessionId)
+  }
+
+  async releaseSession(sessionId: string) {
+    const loading = this.sessions.get(sessionId)
+    if (!loading) return
+    const runtime = await loading
+    runtime.stopping = true
+    await runtime.session.abort()
+    await runtime.processing
+    await runtime.session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' })
+    runtime.session.dispose()
+    this.sessions.delete(sessionId)
   }
 
   async exportSession(sessionId: string) {
@@ -711,8 +762,22 @@ export class PiBridge implements Engine {
     return { backend: this.backend, session: record, entries: session.sessionManager.getEntries() }
   }
 
-  async compactSession(_sessionId: string): Promise<never> {
-    throw new IneffaError('unsupported_backend_feature', 'Pi 暂不支持从 WebUI 手动压缩会话。')
+  async compactSession(sessionId: string) {
+    const runtime = await this.load(sessionId)
+    if (runtime.processing || !runtime.session.isIdle) {
+      throw new IneffaError('session_busy', '请等待当前执行结束后再压缩会话。', 409)
+    }
+    const compaction = runtime.session.compact()
+    runtime.processing = compaction.then(
+      () => {},
+      () => {}
+    )
+    try {
+      return await compaction
+    } finally {
+      runtime.processing = undefined
+      this.drain(runtime)
+    }
   }
 
   async active() {
@@ -736,19 +801,21 @@ export class PiBridge implements Engine {
 
   async messages(sessionId: string, cursor?: string) {
     const runtime = await this.transcript(sessionId)
-    const entries = runtime.session.sessionManager.getEntries().filter((entry) => entry.type === 'message')
-    const all = entries
-      .flatMap((entry) => {
-        if (entry.type !== 'message' || !['user', 'assistant'].includes(entry.message.role)) return []
-        const mapped = this.journal.db
-          .query('SELECT id,inputId FROM messages WHERE sessionId=? AND entryId=?')
-          .get(sessionId, entry.id) as { id: string; inputId: string } | null
-        return [this.convertMessage(runtime, mapped?.id ?? entry.id, entry.message, mapped?.inputId)]
-      })
-      .reverse()
-    const start = cursor ? Math.max(0, all.findIndex((message) => message.id === cursor) + 1) : 0
-    const data = all.slice(start, start + 100)
-    return { data, cursor: { next: start + 100 < all.length ? data.at(-1)!.id : null } }
+    const entries = runtime.session.sessionManager.getEntries()
+    const cursorEntry = cursor && (this.journal.message(cursor)?.entryId ?? cursor)
+    const end = cursorEntry ? entries.findIndex((entry) => entry.id === cursorEntry) : entries.length
+    const data: EngineMessage[] = []
+    for (let index = end - 1; index >= 0; index--) {
+      const entry = entries[index]!
+      if (entry.type !== 'message' || (entry.message.role !== 'user' && entry.message.role !== 'assistant')) continue
+      if (data.length === 100) return { data, cursor: { next: data.at(-1)!.id } }
+      const mapped = this.journal.db
+        .query('SELECT id,inputId FROM messages WHERE sessionId=? AND entryId=?')
+        .get(sessionId, entry.id) as { id: string; inputId: string } | null
+      const results = entry.message.role === 'assistant' ? followingToolResults(entries, index) : undefined
+      data.push(this.convertMessage(runtime, mapped?.id ?? entry.id, entry.message, mapped?.inputId, results))
+    }
+    return { data, cursor: { next: null } }
   }
 
   async message(sessionId: string, messageId: string) {
@@ -756,10 +823,24 @@ export class PiBridge implements Engine {
     const mapping = this.journal.message(messageId)
     const entry = runtime.session.sessionManager.getEntry(mapping?.entryId ?? messageId)
     if (!entry || entry.type !== 'message') throw new IneffaError('message_not_found', '消息不存在。', 404)
-    return this.convertMessage(runtime, messageId, entry.message, mapping?.inputId)
+    let results: Map<string, ToolResultMessage> | undefined
+    if (entry.message.role === 'assistant' && entry.message.content.some((part) => part.type === 'toolCall')) {
+      const entries = runtime.session.sessionManager.getEntries()
+      results = followingToolResults(
+        entries,
+        entries.findIndex((item) => item.id === entry.id)
+      )
+    }
+    return this.convertMessage(runtime, messageId, entry.message, mapping?.inputId, results)
   }
 
-  private convertMessage(runtime: Transcript, id: string, message: AgentMessage, inputId?: string): EngineMessage {
+  private convertMessage(
+    runtime: Transcript,
+    id: string,
+    message: AgentMessage,
+    inputId?: string,
+    results?: Map<string, ToolResultMessage>
+  ): EngineMessage {
     const timestamp = 'timestamp' in message ? Number(message.timestamp) : Date.now()
     const base = {
       id,
@@ -768,9 +849,6 @@ export class PiBridge implements Engine {
     }
     if (message.role !== 'assistant')
       return { ...base, type: 'user', text: textContent('content' in message ? message.content : '') }
-    const results = runtime.session.sessionManager
-      .getEntries()
-      .flatMap((entry) => (entry.type === 'message' && entry.message.role === 'toolResult' ? [entry.message] : []))
     return {
       ...base,
       type: 'assistant',
@@ -780,7 +858,7 @@ export class PiBridge implements Engine {
         if (part.type === 'text') return [{ type: 'text', text: part.text }]
         if (part.type === 'thinking') return [{ type: 'reasoning', text: part.thinking }]
         if (part.type === 'toolCall') {
-          const result = results.find((result) => result.toolCallId === part.id)
+          const result = results?.get(part.id)
           return [
             {
               type: 'tool',
@@ -890,6 +968,7 @@ export class PiBridge implements Engine {
     for (const [id, promise] of this.sessions) {
       const runtime = await promise
       await this.stop(id, false)
+      await runtime.session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' })
       runtime.session.dispose()
     }
     for (const listener of this.listeners) listener({ type: 'session.status', data: {}, created: Date.now() })

@@ -195,7 +195,9 @@ export function EngineSettings({
                     </div>
                   </article>
                 ))}
-              <p className="muted engine-description">连接操作作用于当前工作目录；编辑和删除保存到全局配置。</p>
+              <p className="muted engine-description">
+                连接状态和启停操作对应当前目录的 OpenCode。保存的 MCP 配置也供 Pi 按需连接。
+              </p>
             </>
           )}
           {section === 'skills' && (

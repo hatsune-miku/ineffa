@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -5,6 +6,7 @@ import { slashCommand } from './commands'
 import { Delivery } from './delivery'
 import { type Backend, type Engine, sourceInputId } from './engine'
 import { snapshotFile } from './files'
+import { buildHandoff } from './handoff'
 import { conversationContext, messageContext } from './message-context'
 import { modelReference } from './model'
 import type { OpenCodeBridge } from './opencode'
@@ -32,6 +34,8 @@ export class Host {
   readonly delivery: Delivery
   private readonly presentation: Presentation
   private readonly questions: Questions
+  private switching = new Set<string>()
+  private sessionMutations = new Map<string, number>()
   private identityOwners = new Map<string, string>()
   private listeners = new Set<(event: HostEvent) => void>()
   private submissions = new Map<string, Promise<unknown>>()
@@ -353,7 +357,7 @@ export class Host {
         const root = this.store.inbound(source.rootId)
         if (
           !root ||
-          this.store.binding(root.bindingId).archivedAt ||
+          !this.store.continues(root.bindingId) ||
           this.store.hasResetSince(adapterId, message.address.id, root.createdAt)
         )
           return
@@ -509,24 +513,18 @@ export class Host {
     let backoff = 250
     // Rebuild transient counters from the backend journal; never resend past replies.
     let cursor = 0
+    const journalInputs = new Set<string>()
     const engine = this.engineFor(this.store.binding(id))
     while (!signal.aborted) {
       try {
         for await (const event of engine.log({ ...this.store.binding(id), cursor }, signal)) {
           if (!('durable' in event) || !event.durable) continue
           const binding = this.store.binding(id)
-          this.presentation.observe(binding, event, event.durable.seq <= binding.cursor)
-          const replay = event.durable.seq <= binding.cursor
-          if (replay && event.type !== 'session.step.ended' && event.type !== 'session.step.failed') {
-            cursor = event.durable.seq
-            continue
-          }
-          let inputId: string | undefined
+          let deliveredInputId: string | undefined
           if (event.type === 'session.inbox.delivered') {
-            inputId = event.data.inboxID
-            if (!this.store.inbound(inputId)) {
-              const message = await engine.message(binding.sessionId, inputId).catch((error) => {
-                // Control inbox entries do not necessarily create a message. Other errors must replay the event.
+            deliveredInputId = event.data.inboxID
+            if (!this.store.inbound(deliveredInputId)) {
+              const message = await engine.message(binding.sessionId, deliveredInputId).catch((error) => {
                 if (
                   (error as { _tag?: string })?._tag === 'MessageNotFoundError' ||
                   (error instanceof IneffaError && error.code === 'message_not_found')
@@ -534,9 +532,25 @@ export class Host {
                   return
                 throw error
               })
-              if (message) inputId = sourceInputId(message)
+              if (message) deliveredInputId = sourceInputId(message)
             }
+            if (this.store.inbound(deliveredInputId)?.bindingId === id) journalInputs.add(deliveredInputId)
           }
+          if (
+            event.type === 'session.execution.succeeded' ||
+            event.type === 'session.execution.failed' ||
+            event.type === 'session.execution.interrupted'
+          ) {
+            this.store.settleInputs(id, journalInputs)
+            journalInputs.clear()
+          }
+          this.presentation.observe(binding, event, event.durable.seq <= binding.cursor)
+          const replay = event.durable.seq <= binding.cursor
+          if (replay && event.type !== 'session.step.ended' && event.type !== 'session.step.failed') {
+            cursor = event.durable.seq
+            continue
+          }
+          const inputId = deliveredInputId
           if (event.type === 'session.step.ended' || event.type === 'session.step.failed') {
             if (!replay) engine.debug.usage(event)
             const message = await engine.message(binding.sessionId, event.data.assistantMessageID)
@@ -631,13 +645,7 @@ export class Host {
     const adapter = this.adapter(binding.adapterId)
     const parent = output.inputId ? this.store.inbound(output.inputId) : undefined
     const root = parent ? this.store.inbound(parent.rootId) : undefined
-    if (
-      !root ||
-      !adapter.identity ||
-      !output.messageId ||
-      binding.archivedAt ||
-      this.store.binding(root.bindingId).archivedAt
-    )
+    if (!root || !adapter.identity || !output.messageId || binding.archivedAt || !this.store.continues(root.bindingId))
       return
     const mentions = adapter.mentions(output.text)
     for (const peer of this.conversationPeers(adapter, binding.address)) {
@@ -688,6 +696,7 @@ export class Host {
       this.questions.closeBinding(bindingId)
       await this.stopWatching(bindingId)
       this.presentation.clear(this.store.binding(bindingId))
+      await this.engineFor(this.store.binding(bindingId)).releaseSession?.(this.store.binding(bindingId).sessionId)
     })
     this.emit({ type: 'change', bindingId })
   }
@@ -711,6 +720,135 @@ export class Host {
       this.store.remove(bindingId)
     })
     this.emit({ type: 'change', bindingId })
+  }
+  assertSessionMutable(bindingId: string) {
+    if (this.switching.has(bindingId)) throw new IneffaError('session_switching', '会话正在切换后端。', 409)
+  }
+  beginSessionMutation(bindingId: string): () => void {
+    this.assertSessionMutable(bindingId)
+    this.sessionMutations.set(bindingId, (this.sessionMutations.get(bindingId) ?? 0) + 1)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      const remaining = (this.sessionMutations.get(bindingId) ?? 1) - 1
+      if (remaining) this.sessionMutations.set(bindingId, remaining)
+      else this.sessionMutations.delete(bindingId)
+    }
+  }
+  async cancelPending(bindingId: string, inputId: string) {
+    return this.serial(bindingId, async () => {
+      const binding = this.store.binding(bindingId)
+      if (binding.archivedAt) throw new IneffaError('archived', '此会话已归档。', 409)
+      const engine = this.engineFor(binding)
+      const transfer = this.store.handoff(bindingId)
+      if (
+        transfer?.inputId === inputId &&
+        (await engine.pending(binding.sessionId)).some((item) => item.id !== inputId)
+      )
+        throw new IneffaError(
+          'handoff_input_pending',
+          '此输入携带交接记录，请使用 /abort 一并清空队列后重新发送。',
+          409
+        )
+      await engine.cancelPending(binding.sessionId, inputId)
+      if (this.store.inbound(inputId)) this.store.inboundState(inputId, 'cancelled')
+      this.emit({ type: 'change', bindingId })
+    })
+  }
+  private async assertHandoffIdle(binding: Binding, target: Engine) {
+    const engine = this.engineFor(binding)
+    const [active, pending, forms, session, permissions] = await Promise.all([
+      engine.active(),
+      engine.pending(binding.sessionId),
+      engine.listForms(binding.sessionId),
+      engine.getSession(binding.sessionId),
+      engine.capabilities.permissions ? this.engine.native.permission.list({ sessionID: binding.sessionId }) : [],
+    ])
+    if (active[binding.sessionId] || pending.length || forms.length || permissions.length)
+      throw new IneffaError('session_busy', '请等待当前执行、排队输入和待回答问题结束后切换。', 409)
+    if (
+      !target.capabilities.permissions &&
+      session.permissions?.some((rule) => rule.effect !== 'allow' || rule.action !== '*' || rule.resource !== '*')
+    )
+      throw new IneffaError('handoff_permissions', '目标后端不支持当前会话的权限规则，请先处理这些规则。', 409)
+    this.store.assertHandoffReady(binding.id)
+    return session
+  }
+  async switchBackend(bindingId: string, backend: Backend, model?: string): Promise<Binding> {
+    return this.serial(bindingId, async () => {
+      const previous = this.store.binding(bindingId)
+      if (previous.archivedAt) {
+        const next = this.store.successor(bindingId)
+        if (next?.backend === backend && (!model || !next.model || model === next.model)) {
+          if (!next.archivedAt) await this.ensure(next)
+          return next
+        }
+        throw new IneffaError('archived', '此会话已归档，请选择当前会话。', 409)
+      }
+      if (previous.backend === backend) throw new IneffaError('same_backend', '此会话已使用所选后端。')
+      const target = this.engines.get(backend)
+      if (!target) throw new IneffaError('backend_unavailable', '所选后端未加载。')
+      const adapter = this.adapter(previous.adapterId)
+      const bound = (adapter.backend ?? 'opencode') === backend ? adapter.model : undefined
+      if (bound && model && bound !== model)
+        throw new IneffaError('account_model_bound', '所选后端使用账号绑定的模型。', 409)
+      const selected = bound ?? model
+      modelReference(selected)
+      if (backend === 'pi' && !selected) throw new IneffaError('missing_model', '请选择 Pi 使用的模型。')
+      if (this.sessionMutations.has(bindingId))
+        throw new IneffaError('session_busy', '会话设置正在更新，请稍后切换。', 409)
+      this.switching.add(bindingId)
+      const id = randomUUID()
+      const now = Date.now()
+      const next: Binding = {
+        ...previous,
+        id,
+        backend,
+        model: selected,
+        predecessorId: previous.id,
+        sessionId: `ses_${id.replaceAll('-', '')}`,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        engineReady: 0,
+        cursor: 0,
+        inputId: null,
+        agent: backend === 'opencode' ? adapter.agent : 'build',
+      }
+      let prepared = false
+      let committed = false
+      try {
+        await this.promptsReady
+        await this.assertHandoffIdle(previous, target)
+        const transfer = await buildHandoff(
+          previous,
+          this.engineFor(previous),
+          this.store,
+          `${adapter.name} · ${adapter.identity?.id ?? adapter.id} · Bot`
+        )
+        prepared = true
+        await target.ensure(next, selected)
+        await this.assertHandoffIdle(previous, target)
+        const result = this.store.commitHandoff(previous.id, next, transfer)
+        committed = true
+        await this.stopWatching(previous.id)
+        this.presentation.clear(previous)
+        await this.ensure(result)
+        try {
+          await this.engineFor(previous).releaseSession?.(previous.sessionId)
+        } catch (error) {
+          this.emit({ type: 'error', bindingId: previous.id, message: errorMessage(error) })
+        }
+        this.emit({ type: 'change', bindingId: result.id })
+        return this.store.binding(result.id)
+      } catch (error) {
+        if (prepared && !committed) await target.removeSession(next.sessionId).catch(() => {})
+        throw error
+      } finally {
+        this.switching.delete(bindingId)
+      }
+    })
   }
   async reset(bindingId: string) {
     return this.serial(bindingId, () => this.resetBinding(bindingId))
@@ -743,6 +881,7 @@ export class Host {
       if (info.model && backend === previous.backend && !adapter.model)
         await this.engineFor(next).switchModel(next.sessionId, info.model)
     }
+    await this.engineFor(previous).releaseSession?.(previous.sessionId)
     this.emit({ type: 'change', bindingId: next.id })
     return this.store.binding(next.id)
   }

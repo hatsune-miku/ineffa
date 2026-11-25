@@ -1,14 +1,9 @@
 import { IneffaError, type OpenCodeBridge } from 'ineffa'
-import { type ParseError, applyEdits, modify, parse } from 'jsonc-parser'
-import { readFile, rename, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { applyEdits, modify } from 'jsonc-parser'
+import { rename, writeFile } from 'node:fs/promises'
 
-import type { OpenCode } from '@opencode/sdk'
+import { type ConfigDocument, readSettingsDocument } from './settings-document'
 
-type ConfigDocument = Extract<
-  Awaited<ReturnType<OpenCode.Interface['config']['get']>>[number],
-  { type: 'document' }
->['info']
 type ProviderConfig = NonNullable<ConfigDocument['providers']>[string]
 
 export const compatiblePackage = 'aisdk:@ai-sdk/openai-compatible'
@@ -78,16 +73,8 @@ export class ProviderSettings {
     private assertUnused: (providerId: string, models?: string[]) => Promise<void> = async () => {}
   ) {}
 
-  private async document() {
-    const jsonc = join(this.engine.configDirectory, 'opencode.jsonc')
-    const path = (await Bun.file(jsonc).exists()) ? jsonc : join(this.engine.configDirectory, 'opencode.json')
-    const content = (await Bun.file(path).exists()) ? await readFile(path, 'utf8') : '{}\n'
-    const errors: ParseError[] = []
-    const config = parse(content, errors, { allowTrailingComma: true }) as ConfigDocument
-    if (errors.length || !config || typeof config !== 'object' || Array.isArray(config)) {
-      throw new IneffaError('invalid_provider_config', `OpenCode 配置不是有效的 JSON/JSONC：${path}`)
-    }
-    return { path, content, config }
+  private document() {
+    return readSettingsDocument(this.engine.configDirectory, 'invalid_provider_config')
   }
 
   async list(): Promise<ProviderView[]> {

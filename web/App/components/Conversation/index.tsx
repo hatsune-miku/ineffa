@@ -16,10 +16,14 @@ import './index.css'
 
 type Submitted = { text: string; id: string; mode: string }
 
-function savedDraft(id: string): { text: string; pending?: Submitted } {
+function savedDraft(id: string, predecessorId?: string): { text: string; pending?: Submitted } {
   try {
     const raw = sessionStorage.getItem(`draft:${id}`)
-    if (!raw) return { text: '' }
+    if (!raw) {
+      const previous = predecessorId && savedDraft(predecessorId)
+      if (previous && !previous.pending) return { text: previous.text }
+      return { text: '' }
+    }
     try {
       const value = JSON.parse(raw)
       if (typeof value.text === 'string') return value
@@ -50,7 +54,7 @@ export function Conversation({
   const [cursor, setCursor] = useState(detail.cursor)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [initialDraft] = useState(() => savedDraft(binding.id))
+  const [initialDraft] = useState(() => savedDraft(binding.id, binding.predecessorId))
   const [draft, setDraft] = useState(initialDraft.text)
   const [mode, setMode] = useState(detail.capabilities.steer ? (initialDraft.pending?.mode ?? 'queue') : 'queue')
   const [sending, setSending] = useState(false)

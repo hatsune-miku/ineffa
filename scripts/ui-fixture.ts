@@ -3,6 +3,7 @@ import { mkdir, mkdtemp } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 import { AccountsConfig } from '../src/config'
+import { readPiResources } from '../src/pi-settings'
 import { ProviderSettings } from '../src/providers'
 import { createServer } from '../src/server'
 import { webAdapter } from '../src/web-adapter'
@@ -13,7 +14,10 @@ const root = resolve('test-results')
 await mkdir(root, { recursive: true })
 const piDirectory = await mkdtemp(join(root, 'pi-ui-'))
 let providers: ProviderSettings
-const pi = await PiBridge.open(piDirectory, { resolveModel: (reference) => providers.resolvePiModel(reference) })
+const pi = await PiBridge.open(piDirectory, {
+  resolveModel: (reference) => providers.resolvePiModel(reference),
+  resources: (workspace) => readPiResources(f.engine.configDirectory, workspace, false),
+})
 const f = await fixture(
   async (request) => {
     await Bun.sleep(350)

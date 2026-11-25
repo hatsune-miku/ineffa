@@ -1,11 +1,13 @@
 import { Schema } from 'effect'
 import { type Host, IneffaError } from 'ineffa'
-import { type ParseError, applyEdits, modify, parse } from 'jsonc-parser'
-import { readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { applyEdits, modify } from 'jsonc-parser'
+import { rename, rm, writeFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 
 import { Config } from '@opencode/schema/config'
 import type { OpenCode } from '@opencode/sdk'
+
+import { readSettingsDocument } from './settings-document'
 
 type Native = OpenCode.Interface
 export type McpConfig = Parameters<Native['mcp']['add']>[0]['config']
@@ -59,16 +61,8 @@ export class OpenCodeSettings {
     private defaultDirectory: string
   ) {}
 
-  private async document() {
-    const jsonc = join(this.host.engine.configDirectory, 'opencode.jsonc')
-    const path = (await Bun.file(jsonc).exists()) ? jsonc : join(this.host.engine.configDirectory, 'opencode.json')
-    const content = (await Bun.file(path).exists()) ? await readFile(path, 'utf8') : '{}\n'
-    const errors: ParseError[] = []
-    const config = parse(content, errors, { allowTrailingComma: true }) as Document
-    if (errors.length || !config || typeof config !== 'object' || Array.isArray(config)) {
-      throw new IneffaError('invalid_opencode_config', 'OpenCode 配置文件不是有效的 JSON/JSONC。')
-    }
-    return { path, content, config }
+  private document() {
+    return readSettingsDocument(this.host.engine.configDirectory)
   }
 
   directories() {

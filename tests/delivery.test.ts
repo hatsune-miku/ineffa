@@ -61,6 +61,10 @@ describe('confirmed public delivery', () => {
       const binding = store.ensure('A', human('a', '').address, 'build', directory)
       const old = store.prepareOutput(binding.id, 'old', null, 'OLD_BODY')
       store.db.exec(`
+        DROP INDEX handoff_successor;
+        DROP TABLE handoffs;
+        ALTER TABLE inbound DROP COLUMN settled;
+        ALTER TABLE bindings DROP COLUMN predecessorId;
         ALTER TABLE outbound DROP COLUMN notes;
         ALTER TABLE bindings DROP COLUMN backend;
         ALTER TABLE bindings DROP COLUMN model;

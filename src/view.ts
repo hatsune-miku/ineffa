@@ -59,8 +59,7 @@ export function messageView(message: EngineMessage, input?: Inbound, debugReport
       error: message.error?.message,
     }
   }
-  if (message.type === 'compaction')
-    return { ...base, role: 'system', text: '上下文已由 OpenCode 整理。原始对话仍保留。' }
+  if (message.type === 'compaction') return { ...base, role: 'system', text: '上下文已压缩。' }
   if (message.type === 'synthetic') return { ...base, role: 'system', text: message.text }
   return undefined
 }

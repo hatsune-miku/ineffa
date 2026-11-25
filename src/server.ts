@@ -127,6 +127,7 @@ export function createServer(host: Host, options: ServerOptions) {
       const url = new URL(request.url)
       const path = url.pathname
       let releaseConfiguration: (() => void) | undefined
+      let releaseSession: (() => void) | undefined
       try {
         const publicOrigin = options.publicOrigin ? new URL(options.publicOrigin).origin : undefined
         const localNames = ['localhost', '127.0.0.1', '[::1]', hostname]
@@ -148,7 +149,11 @@ export function createServer(host: Host, options: ServerOptions) {
         if (path === '/api/auth') return Response.json({ authenticated: authenticate(request) })
         if (path.startsWith('/api/') && !authenticate(request))
           throw new IneffaError('unauthorized', '需要访问令牌。', 401)
-        if (request.method === 'POST' && /^\/api\/(config|providers|integrations|adapters|opencode)(\/|$)/.test(path)) {
+        const backendSwitch = /^\/api\/sessions\/[^/]+\/backend$/.test(path)
+        if (
+          request.method === 'POST' &&
+          (backendSwitch || /^\/api\/(config|providers|integrations|adapters|opencode)(\/|$)/.test(path))
+        ) {
           const previous = configurationWrites
           configurationWrites = new Promise<void>((resolve) => {
             releaseConfiguration = resolve
@@ -181,7 +186,7 @@ export function createServer(host: Host, options: ServerOptions) {
         if (path === '/api/config/status') return Response.json({ pending: await transfer.pending() })
         if (
           request.method === 'POST' &&
-          /^\/api\/(providers|integrations|adapters|opencode)(\/|$)/.test(path) &&
+          (backendSwitch || /^\/api\/(providers|integrations|adapters|opencode)(\/|$)/.test(path)) &&
           (await transfer.pending())
         ) {
           throw new IneffaError('import_pending', '配置导入已保存，请重启服务后再编辑配置。', 409)
@@ -326,7 +331,7 @@ export function createServer(host: Host, options: ServerOptions) {
         }
         const match = /^\/api\/sessions\/([^/]+)(?:\/(.*))?$/.exec(path)
         if (match) {
-          const binding = host.store.binding(match[1]!)
+          let binding = host.store.binding(match[1]!)
           const action = match[2] ?? ''
           const sessionID = binding.sessionId
           const engine = host.engineFor(binding)
@@ -380,11 +385,15 @@ export function createServer(host: Host, options: ServerOptions) {
               )
               rows.sort((left, right) => left!.createdAt - right!.createdAt)
             }
+            const adapter = host.adapters.get(binding.adapterId)
+            const accountBackend = adapter?.backend ?? 'opencode'
+            const otherBackend = binding.backend === 'pi' ? 'opencode' : 'pi'
             return Response.json({
               binding,
-              accountModel:
-                (host.adapters.get(binding.adapterId)?.backend ?? 'opencode') === binding.backend
-                  ? host.adapters.get(binding.adapterId)?.model
+              accountModel: accountBackend === binding.backend ? adapter?.model : undefined,
+              switchTarget:
+                !binding.archivedAt && host.engines.has(otherBackend)
+                  ? { backend: otherBackend, model: accountBackend === otherBackend ? adapter?.model : undefined }
                   : undefined,
               capabilities: engine.capabilities,
               info: {
@@ -412,6 +421,20 @@ export function createServer(host: Host, options: ServerOptions) {
           }
           if (request.method === 'POST') {
             const data = await body(request)
+            // The binding may have been archived while a request body was still arriving.
+            binding = host.store.binding(binding.id)
+            if (action === 'backend') {
+              if (!data.backend) throw new IneffaError('invalid_backend', '请选择目标后端。')
+              const target = requestedBackend(data.backend)
+              const model = data.model === undefined ? undefined : text(data.model, '模型')
+              if (!binding.archivedAt && binding.backend !== target) {
+                const adapter = host.adapters.get(binding.adapterId)
+                const boundModel = (adapter?.backend ?? 'opencode') === target ? adapter?.model : undefined
+                await validateAccountModel(binding.directory, boundModel ?? model, target)
+              }
+              return Response.json(await host.switchBackend(binding.id, target, model))
+            }
+            releaseSession = host.beginSessionMutation(binding.id)
             if (
               binding.archivedAt &&
               action === 'messages' &&
@@ -530,10 +553,8 @@ export function createServer(host: Host, options: ServerOptions) {
             }
             if (action === 'queue/cancel' || action === 'queue/steer') {
               const inboxID = text(data.id, '输入 ID', 128)
-              if (action.endsWith('cancel')) {
-                await engine.cancelPending(sessionID, inboxID)
-                if (host.store.inbound(inboxID)) host.store.inboundState(inboxID, 'cancelled')
-              } else await engine.steerPending(sessionID, inboxID)
+              if (action.endsWith('cancel')) await host.cancelPending(binding.id, inboxID)
+              else await engine.steerPending(sessionID, inboxID)
               host.emit({ type: 'change', bindingId: binding.id })
               return Response.json({ ok: true })
             }
@@ -786,6 +807,7 @@ export function createServer(host: Host, options: ServerOptions) {
           { status, headers: { 'Cache-Control': 'no-store' } }
         )
       } finally {
+        releaseSession?.()
         releaseConfiguration?.()
       }
     }),

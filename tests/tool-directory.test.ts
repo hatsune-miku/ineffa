@@ -9,8 +9,8 @@ import { OpenCode } from '@opencode/sdk'
 
 import { type ModelRequest, TestAdapter, fixture, human, systemText, until } from './fixture'
 
+import { directoryTools } from '../packages/ineffa/src/directories'
 import { accountPrompt } from '../packages/ineffa/src/prompt'
-import { directoryTools } from '../packages/ineffa/src/tool-directory'
 
 function names(request: ModelRequest): string[] {
   return (request.tools as { function: { name: string } }[]).map((tool) => tool.function.name)

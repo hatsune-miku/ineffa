@@ -14,6 +14,7 @@ export type FormField = PendingForm['fields'][number]
 export type ConversationDetail = {
   binding: Binding
   accountModel?: string
+  switchTarget?: { backend: Backend; model?: string }
   capabilities: Engine['capabilities']
   messages: MessageView[]
   cursor?: string

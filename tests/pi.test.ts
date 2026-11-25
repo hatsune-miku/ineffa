@@ -10,7 +10,7 @@ type Request = {
   messages: { role: string; content: unknown }[]
   tools?: { function: { name: string; parameters: unknown } }[]
 }
-type Reply = string | { tool: string; input: Record<string, unknown> }
+type Reply = string | { tool: string; input: Record<string, unknown>; callId?: string }
 const cleanup: (() => Promise<void>)[] = []
 
 afterEach(async () => {
@@ -36,7 +36,7 @@ async function piFixture(reply: (request: Request, index: number) => Reply | Pro
           ? undefined
           : {
               index: 0,
-              id: `call_${requests.length}`,
+              id: answer.callId ?? `call_${requests.length}`,
               type: 'function',
               function: { name: answer.tool, arguments: JSON.stringify(answer.input) },
             }
@@ -147,6 +147,33 @@ async function piFixture(reply: (request: Request, index: number) => Reply | Pro
   }
 }
 
+test('Pi history attaches reused provider tool-call IDs to the correct assistant step', async () => {
+  const f = await piFixture((_request, index) => {
+    if (index === 0) return { tool: 'list_coding_tools', input: {} }
+    if (index === 1 || index === 2) {
+      return { tool: 'read', input: { path: `note-${index}.txt` }, callId: 'same_call_id' }
+    }
+    return 'done'
+  })
+  await Promise.all([
+    writeFile(join(f.workspace, 'note-1.txt'), 'first result'),
+    writeFile(join(f.workspace, 'note-2.txt'), 'second result'),
+  ])
+  await f.engine.submit(f.binding, f.input('notes', 'Read both files'))
+  await until(() => f.events.some((event) => event.type === 'session.execution.succeeded'))
+  const history = await f.engine.messages(f.binding.sessionId)
+  const results = history.data.flatMap((message) =>
+    message.type === 'assistant' ? message.content.filter((part) => part.type === 'tool' && part.name === 'read') : []
+  )
+  expect(results).toHaveLength(2)
+  const reads = f.events.flatMap((event) =>
+    event.type === 'session.tool.input.started' && event.data.name === 'read' ? [event.data.id] : []
+  )
+  expect(new Set(reads).size).toBe(2)
+  expect(JSON.stringify(results[0])).toContain('second result')
+  expect(JSON.stringify(results[1])).toContain('first result')
+})
+
 test('Pi uses native persistence, compact discovery and idempotent input across restart', async () => {
   const f = await piFixture((_request, index) =>
     index === 0
@@ -237,7 +264,7 @@ test('Pi sends files through the adapter callback and omits discovery calls from
   }
   expect(reports[0]).toContain('工具 1 次')
   expect(reports[1]).toContain('工具 0 次')
-  expect(reports[0]).not.toContain('首字')
+  expect(reports[0]).toMatch(/首字 \d+ ms/)
 }, 30000)
 
 test('Pi preserves queued work across shutdown without repeating an interrupted question', async () => {

@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { AccountsConfig, accountAdapter, prepareDirectories, readConfig } from './config'
 import { applyPendingImport } from './config-transfer'
 import { acquireOwnership } from './ownership'
+import { readPiResources } from './pi-settings'
 import { ProviderSettings } from './providers'
 import { createServer } from './server'
 import { webAdapter } from './web-adapter'
@@ -23,6 +24,7 @@ const engine = await OpenCodeBridge.open(resolve(dataDirectory, 'opencode'), con
 const providers = new ProviderSettings(engine)
 const pi = await PiBridge.open(resolve(dataDirectory, 'pi'), {
   resolveModel: (reference) => providers.resolvePiModel(reference),
+  resources: (workspace) => readPiResources(engine.configDirectory, workspace, config.opencode?.browser !== false),
 })
 const host = new Host(store, engine, config.limits, [pi])
 await host.addAdapter(webAdapter(directory))

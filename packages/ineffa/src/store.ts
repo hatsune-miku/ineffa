@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite'
 import { createHash, randomUUID } from 'node:crypto'
 
 import type { Backend } from './engine'
+import { type Handoff, handoffPrompt } from './handoff'
 import type { Address, Attachment, Binding, Inbound, Outbound, OutputKind } from './types'
 import { IneffaError } from './types'
 
@@ -15,6 +16,7 @@ function binding(row: Row): Binding {
     address: JSON.parse(String(row.address)),
     debug: Boolean(row.debug),
     model: row.model ?? undefined,
+    predecessorId: row.predecessorId ?? undefined,
   } as Binding
 }
 function inbound(row: Row): Inbound {
@@ -40,7 +42,7 @@ export class Store {
     this.db = new Database(path, { create: true, strict: true })
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;')
     const version = this.db.query('PRAGMA user_version').get() as { user_version: number }
-    if (version.user_version > 9) throw new Error('投递数据库来自较新的 Ineffa 版本，请恢复配套备份。')
+    if (version.user_version > 10) throw new Error('投递数据库来自较新的 Ineffa 版本，请恢复配套备份。')
     this.db.transaction(() => {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS bindings (
@@ -105,7 +107,15 @@ export class Store {
           "ALTER TABLE bindings ADD COLUMN backend TEXT NOT NULL DEFAULT 'opencode'; ALTER TABLE bindings ADD COLUMN model TEXT;"
         )
       }
-      this.db.exec('PRAGMA user_version=9;')
+      if (version.user_version < 10) {
+        this.db.exec(`ALTER TABLE bindings ADD COLUMN predecessorId TEXT;
+          ALTER TABLE inbound ADD COLUMN settled INTEGER NOT NULL DEFAULT 0;
+          CREATE UNIQUE INDEX handoff_successor ON bindings(predecessorId) WHERE predecessorId IS NOT NULL;
+          CREATE TABLE handoffs (bindingId TEXT PRIMARY KEY REFERENCES bindings(id), entries TEXT NOT NULL,
+            truncated INTEGER NOT NULL, inputId TEXT);
+        `)
+      }
+      this.db.exec('PRAGMA user_version=10;')
     })()
     // A process may have died after the remote side accepted a send. Do not resend blindly.
     this.db
@@ -174,6 +184,110 @@ export class Store {
       return this.binding(id)
     })()
   }
+  successor(id: string) {
+    const row = this.db
+      .query('SELECT * FROM bindings WHERE predecessorId=? AND deletedAt IS NULL')
+      .get(id) as Row | null
+    return row ? binding(row) : undefined
+  }
+  continues(id: string): boolean {
+    const row = this.db
+      .query(
+        `
+      WITH RECURSIVE lineage(id,archivedAt) AS (
+        SELECT id,archivedAt FROM bindings WHERE id=? AND deletedAt IS NULL
+        UNION ALL SELECT b.id,b.archivedAt FROM bindings b JOIN lineage l ON b.predecessorId=l.id WHERE b.deletedAt IS NULL
+      ) SELECT 1 FROM lineage WHERE archivedAt IS NULL LIMIT 1
+    `
+      )
+      .get(id)
+    return Boolean(row)
+  }
+  handoff(id: string): Handoff | undefined {
+    const row = this.db.query('SELECT entries,truncated,inputId FROM handoffs WHERE bindingId=?').get(id) as {
+      entries: string
+      truncated: number
+      inputId: string | null
+    } | null
+    return row
+      ? { entries: JSON.parse(row.entries), truncated: Boolean(row.truncated), inputId: row.inputId ?? undefined }
+      : undefined
+  }
+  consumedBackground(id: string): Inbound[] {
+    return (
+      this.db
+        .query(
+          "SELECT * FROM inbound WHERE bindingId=? AND state='observed' AND contextInputId IS NOT NULL ORDER BY createdAt DESC LIMIT 300"
+        )
+        .all(id) as Row[]
+    ).map(inbound)
+  }
+  settleInputs(bindingId: string, ids: Iterable<string>) {
+    this.db.transaction(() => {
+      const query = this.db.query('UPDATE inbound SET settled=1 WHERE bindingId=? AND id=?')
+      for (const id of ids) query.run(bindingId, id)
+    })()
+  }
+  assertHandoffReady(id: string) {
+    if (
+      this.db
+        .query("SELECT 1 FROM inbound WHERE bindingId=? AND state='admitted' AND command IS NULL AND settled=0 LIMIT 1")
+        .get(id)
+    )
+      throw new IneffaError('session_settling', '会话记录仍在更新，请稍后切换。', 409)
+    if (
+      this.db
+        .query("SELECT 1 FROM inbound WHERE bindingId=? AND state IN ('pending','failed','unknown') LIMIT 1")
+        .get(id)
+    )
+      throw new IneffaError('handoff_pending_input', '请先处理排队、失败或结果未知的输入。', 409)
+    if (
+      this.db
+        .query(
+          "SELECT 1 FROM outbound WHERE bindingId=? AND (state<>'sent' OR complete=0 OR deliveredRevision<revision OR relayed=0) LIMIT 1"
+        )
+        .get(id)
+    )
+      throw new IneffaError('handoff_pending_delivery', '请等待消息送达并处理失败或结果未知的投递。', 409)
+    if (this.db.query("SELECT 1 FROM platform_questions WHERE bindingId=? AND state<>'closed' LIMIT 1").get(id))
+      throw new IneffaError('handoff_pending_question', '请先回答或取消待处理的问题。', 409)
+  }
+  commitHandoff(previousId: string, next: Binding, transfer: Handoff): Binding {
+    return this.db.transaction(() => {
+      const previous = this.binding(previousId)
+      if (previous.archivedAt || this.current(previous.adapterId, previous.address.id)?.id !== previousId)
+        throw new IneffaError('handoff_changed', '会话已变化，请重新选择当前会话。', 409)
+      this.assertHandoffReady(previousId)
+      this.archive(previousId)
+      this.db
+        .query(
+          `INSERT INTO bindings(id,adapterId,conversationId,address,agent,directory,sessionId,createdAt,updatedAt,backend,model,debug,engineReady,predecessorId)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?)`
+        )
+        .run(
+          next.id,
+          next.adapterId,
+          next.address.id,
+          JSON.stringify(next.address),
+          next.agent,
+          next.directory,
+          next.sessionId,
+          next.createdAt,
+          next.updatedAt,
+          next.backend,
+          next.model ?? null,
+          next.debug ? 1 : 0,
+          previousId
+        )
+      this.db
+        .query('INSERT INTO handoffs(bindingId,entries,truncated) VALUES(?,?,?)')
+        .run(next.id, JSON.stringify(transfer.entries), transfer.truncated ? 1 : 0)
+      this.db
+        .query("UPDATE inbound SET bindingId=? WHERE bindingId=? AND state='observed' AND contextInputId IS NULL")
+        .run(next.id, previousId)
+      return this.binding(next.id)
+    })()
+  }
   rename(id: string, title: string) {
     const b = this.binding(id)
     this.db
@@ -212,6 +326,8 @@ export class Store {
       this.db.query('DELETE FROM outbound WHERE bindingId=?').run(id)
       this.db.query('DELETE FROM inbound WHERE bindingId=?').run(id)
       this.db.query('DELETE FROM debug_reports WHERE bindingId=?').run(id)
+      this.db.query('DELETE FROM handoffs WHERE bindingId=?').run(id)
+      this.db.query('UPDATE bindings SET predecessorId=NULL WHERE predecessorId=?').run(id)
       // Retain the address boundary so late reports cannot revive a deleted conversation.
       const now = Date.now()
       this.db
@@ -285,6 +401,13 @@ export class Store {
     return this.db.transaction(() => {
       const existing = this.inbound(item.id)
       if (existing) return { item: existing, fresh: false }
+      const transfer = !item.command && item.state === 'pending' ? this.handoff(item.bindingId) : undefined
+      if (transfer && !transfer.inputId) {
+        item = { ...item, prompt: [handoffPrompt(transfer), item.prompt].join('\n\n') }
+        this.db
+          .query('UPDATE handoffs SET inputId=? WHERE bindingId=? AND inputId IS NULL')
+          .run(item.id, item.bindingId)
+      }
       this.db
         .query(
           'INSERT INTO inbound(id,bindingId,message,prompt,rootId,bot,state,createdAt,command) VALUES(?,?,?,?,?,?,?,?,?)'
@@ -313,7 +436,10 @@ export class Store {
   inboundState(id: string, state: Inbound['state'], error: string | null = null) {
     this.db.transaction(() => {
       this.db.query('UPDATE inbound SET state=?,error=? WHERE id=?').run(state, error, id)
-      if (state === 'cancelled') this.db.query('UPDATE inbound SET contextInputId=NULL WHERE contextInputId=?').run(id)
+      if (state === 'cancelled') {
+        this.db.query('UPDATE inbound SET contextInputId=NULL WHERE contextInputId=?').run(id)
+        this.db.query('UPDATE handoffs SET inputId=NULL WHERE inputId=?').run(id)
+      }
     })()
   }
   pendingInputs() {
@@ -331,7 +457,10 @@ export class Store {
   hasResetSince(adapterId: string, addressId: string, since: number) {
     return Boolean(
       this.db
-        .query('SELECT 1 FROM bindings WHERE adapterId=? AND conversationId=? AND archivedAt>=? LIMIT 1')
+        .query(
+          `SELECT 1 FROM bindings b WHERE adapterId=? AND conversationId=? AND archivedAt>=?
+          AND NOT EXISTS (SELECT 1 FROM bindings n WHERE n.predecessorId=b.id AND n.deletedAt IS NULL) LIMIT 1`
+        )
         .get(adapterId, addressId, since)
     )
   }

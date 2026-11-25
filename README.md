@@ -20,7 +20,7 @@ bun start
 - 飞书 / Lark 使用自建应用长连接，支持群聊、私聊、卡片和附件。[接入说明](docs/lark.md)
 - 支持图片与文件收发，question 可由指定用户免 @ 回答。[KOOK 接入说明](docs/kook.md)
 - 内置无头 Chromium，无需 OpenCode 桌面端。[浏览器安装与隔离](docs/browser.md)
-- 每个账号可选择后端，新会话生效，已有会话保留原后端。Pi 首版使用已配置的 OpenAI 兼容模型。[后端能力](docs/backends.md)
+- 每个账号可选择默认后端，已有会话可在空闲时携带近期对话切换 OpenCode 或 Pi。[后端能力](docs/backends.md)
 - 账号身份与职责可自定义，支持 `{displayName}`、`{platformId}` 宏。
 
 | 命令 | 用途 |
